@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -13,25 +12,9 @@ import (
 
 	"slices"
 
-	"github.com/a-h/templ"
 	"github.com/nats-io/nats.go/jetstream"
 	datastar "github.com/starfederation/datastar/sdk/go"
 )
-
-// RenderFunc renders a templ fragment for a given JetStream message
-// Returns nil if the subject is not handled.
-type RenderFunc func(msg jetstream.Msg) (templ.Component, error)
-
-// Registry of subject prefix to render function
-var renderers = []struct {
-	Prefix string
-	Fn     RenderFunc
-}{
-	{"event.orders.", renderOrderFrag},
-	{"event.chat.", renderChatFrag},
-	{"event.presence.", renderPresenceFrag},
-	// terminal events will be handled by generic fallback for now
-}
 
 // UIStream is the SSE handler for /ui
 func UIStream(js jetstream.JetStream) http.HandlerFunc {
@@ -106,34 +89,9 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 		consumerCancel := func() {}
 		consumerDone := make(chan struct{})
 
-		subjectMatches := func(pattern, subj string) bool {
-			if pattern == subj {
-				return true
-			}
-			pTok := strings.Split(pattern, ".")
-			sTok := strings.Split(subj, ".")
-			for i, pt := range pTok {
-				if pt == ">" {
-					return true // matches remainder
-				}
-				if i >= len(sTok) {
-					return false
-				}
-				if pt == "*" {
-					continue
-				}
-				if pt != sTok[i] {
-					return false
-				}
-			}
-			return len(sTok) == len(pTok)
-		}
-
 		createConsumer := func(subs []string) (context.CancelFunc, chan struct{}) {
 			cctx, ccancel := context.WithCancel(ctx)
 			cdone := make(chan struct{})
-			patterns := make([]string, len(subs))
-			copy(patterns, subs)
 
 			cons, err := js.CreateConsumer(ctx, "EVENT", jetstream.ConsumerConfig{
 				AckPolicy:      jetstream.AckNonePolicy,
@@ -150,44 +108,13 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 			go func() {
 				defer close(cdone)
 				_, err := cons.Consume(func(msg jetstream.Msg) {
-					// --- Terminal event special-case ---
-					if strings.HasPrefix(msg.Subject(), "terminal.session.") {
-						var evt struct {
-							LineID string `json:"line_id"`
-							Cmd    string `json:"cmd"`
-							Output string `json:"output"`
-						}
-						_ = json.Unmarshal(msg.Data(), &evt)
-						frozen := components.TerminalFrozenLine(evt.Cmd, evt.Output)
-						if err := sse.MergeFragmentTempl(frozen, datastar.WithSelectorID("term-"+evt.LineID)); err != nil {
-							slog.Warn("freeze fail", "err", err)
-						}
-						nextNum := 1
-						if len(evt.LineID) > 1 {
-							fmt.Sscanf(evt.LineID[1:], "%d", &nextNum)
-							nextNum++
-						}
-						nextID := fmt.Sprintf("L%d", nextNum)
-						promptFrag := components.TerminalPrompt(nextID)
-						if err := sse.MergeFragmentTempl(promptFrag, datastar.WithSelectorID("terminal-lines"), datastar.WithMergeAppend()); err != nil {
-							slog.Warn("prompt fail", "err", err)
-						}
-						return
-					}
-
-					// --- Generic path ---
-					frag := dispatchToRenderer(msg)
-					if frag == nil {
-						return
-					}
-					subj := msg.Subject()
-					for _, pat := range patterns {
-						if subjectMatches(pat, subj) {
-							target := subjToID(pat) + "-msg"
-							if err := sse.MergeFragmentTempl(frag, datastar.WithSelectorID(target), datastar.WithMergeAppend()); err != nil {
-								slog.Warn("send fail", "err", err)
+					// New unified dispatch via Renderers registry
+					for _, r := range Renderers {
+						if r.match(msg.Subject()) {
+							if err := r.fn(ctx, msg, sse); err != nil {
+								slog.Warn("render", "subj", msg.Subject(), "err", err)
 							}
-							break // Important: Render only once per message
+							break
 						}
 					}
 				})
@@ -263,47 +190,4 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 
 		<-ctx.Done() // Wait for disconnect
 	}
-}
-
-// dispatchToRenderer finds the first matching renderer for the subject
-func dispatchToRenderer(msg jetstream.Msg) templ.Component {
-	subj := msg.Subject()
-	for _, r := range renderers {
-		if strings.HasPrefix(subj, r.Prefix) {
-			frag, err := r.Fn(msg)
-			if err != nil {
-				slog.Warn("renderer error", "subject", subj, "err", err)
-				return genericFallbackFrag(msg)
-			}
-			return frag
-		}
-	}
-	return genericFallbackFrag(msg)
-}
-
-// Example renderer for orders
-func renderOrderFrag(msg jetstream.Msg) (templ.Component, error) {
-	// TODO: Unmarshal msg.Data() and return a templ fragment
-	return nil, nil
-}
-func renderChatFrag(msg jetstream.Msg) (templ.Component, error) {
-	return nil, nil
-}
-func renderPresenceFrag(msg jetstream.Msg) (templ.Component, error) {
-	return nil, nil
-}
-
-// Fallback: render as <pre> with subject and data
-func genericFallbackFrag(msg jetstream.Msg) templ.Component {
-	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
-		_, _ = w.Write([]byte("<pre>" + msg.Subject() + "\n" + string(msg.Data()) + "</pre>"))
-		return nil
-	})
-}
-
-func subjToID(subj string) string {
-	s := strings.ReplaceAll(subj, ".", "-")
-	s = strings.ReplaceAll(s, ">", "fullwild")
-	s = strings.ReplaceAll(s, "*", "wild")
-	return "sub-" + s
 }
