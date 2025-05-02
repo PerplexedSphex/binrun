@@ -77,6 +77,12 @@ func RunHTTPServer(ctx context.Context, nc *nats.Conn, cfg HTTPServerConfig) <-c
 	r.Get("/health", Health)
 	r.Post("/command/{name}", SendCommand(nc))
 
+	// JetStream context for handlers
+	js, _ := jetstream.New(nc)
+
+	// Terminal endpoint
+	r.Post("/terminal", TerminalCommandHandler(js))
+
 	// UI root route using Templ
 	r.Get("/", templ.Handler(ui.Index()).ServeHTTP)
 
@@ -88,7 +94,6 @@ func RunHTTPServer(ctx context.Context, nc *nats.Conn, cfg HTTPServerConfig) <-c
 		w.Write(ui.FaviconSVG)
 	}))
 
-	js, _ := jetstream.New(nc)
 	r.Get("/ui", UIStream(js))
 	r.Post("/session/load/{preset}", LoadPresetHandler(js))
 

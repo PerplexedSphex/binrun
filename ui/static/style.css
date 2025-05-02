@@ -87,13 +87,14 @@ aside, main { padding: var(--size-3); box-sizing: border-box; }
 #topbar .panel-icons {
   display: flex;
   gap: var(--size-2);
+  padding-right: var(--size-2);
 }
 /* square, icon-only flavour of the default .btn  */
 
 .icon-button {
   /* geometry */
-  inline-size: var(--size-6);
-  block-size: var(--size-6);
+  inline-size: var(--size-5);
+  block-size: var(--size-5);
   padding: 0;                   /* remove default left/right padding */
   gap: 0;                       /* no text, no icon–text gap         */
 
@@ -149,4 +150,39 @@ aside, main { padding: var(--size-3); box-sizing: border-box; }
 .handle-bottom {
   grid-column: 3 / 4;
   grid-row: 3;
+}
+
+/* Terminal styles */
+.terminal {
+    font-family: monospace;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+.terminal-lines {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+}
+.term-line {
+    display: flex;
+    gap: 4px;
+    align-items: baseline;
+}
+.ghost-input {
+    background: transparent;
+    border: none;
+    font-family: inherit;
+    padding: 0;
+    outline: none;
+    color: var(--gray-2);
+}
+.echo {
+    color: var(--gray-1);
+}
+.response {
+    margin-left: auto;
+    color: var(--green-6);
 }

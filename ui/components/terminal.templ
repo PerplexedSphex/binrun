@@ -1,0 +1,36 @@
+package components
+
+// ... existing code ...
+
+templ Terminal() {
+    <div id="terminal" class="terminal" data-signals='{"nextID":1}'>
+        <div id="terminal-lines" class="terminal-lines">
+            @TerminalPrompt("L1")
+        </div>
+    </div>
+}
+
+// Render a new prompt line with given ID
+templ TerminalPrompt(id string) {
+    <div class="term-line" id={"term-"+id}>
+        <span class="prompt">&gt; </span>
+        <form class="term-form"
+              data-on-submit="@post('/terminal', {contentType: 'form'}); $nextID++;">
+            <input type="hidden" name="line_id" value={id}/>
+            <input type="text" name="cmd" class="ghost-input" data-focus
+                   autocomplete="off" spellcheck="false" />
+            <button type="submit" hidden></button>
+        </form>
+    </div>
+}
+
+// A span appended to an existing line with the command feedback text
+templ TerminalResponseSpan(out string) {
+    <span class="response">{out}</span>
+}
+
+// Frozen line: echo of command plus response
+templ TerminalFrozenLine(cmd string, out string) {
+    <span class="echo">{cmd}</span>
+    <span class="response">{out}</span>
+} 

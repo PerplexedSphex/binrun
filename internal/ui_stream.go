@@ -3,12 +3,15 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 
 	components "binrun/ui/components"
+
+	"slices"
 
 	"github.com/a-h/templ"
 	"github.com/nats-io/nats.go/jetstream"
@@ -27,6 +30,7 @@ var renderers = []struct {
 	{"event.orders.", renderOrderFrag},
 	{"event.chat.", renderChatFrag},
 	{"event.presence.", renderPresenceFrag},
+	// terminal events will be handled by generic fallback for now
 }
 
 // UIStream is the SSE handler for /ui
@@ -39,33 +43,69 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
 
-		// --- Fast-path: create initial consumer immediately ---
+		// --- Get session subscriptions, ensuring terminal sub exists in KV ---
 		entry, err := kv.Get(ctx, sid)
 		if err != nil {
-			http.Error(w, "no session subscriptions", 404)
-			return
+			// Entry doesn't exist, create a default one with just terminal
+			slog.Info("UIStream: No session KV found, creating default", "sid", sid)
+			termSubj := fmt.Sprintf("terminal.session.%s.event", sid)
+			info := SessionInfo{Subscriptions: []string{termSubj}}
+			data, _ := json.Marshal(info)
+			if _, putErr := kv.Put(ctx, sid, data); putErr != nil {
+				slog.Error("UIStream: Failed to put default session KV", "sid", sid, "err", putErr)
+				http.Error(w, "internal error", 500)
+				return
+			}
+			// Use this default info to proceed
+			entry, err = kv.Get(ctx, sid) // Re-fetch to get the entry object
+			if err != nil {
+				// Should not happen after successful Put, but handle defensively
+				slog.Error("UIStream: Failed to re-fetch session KV after create", "sid", sid, "err", err)
+				http.Error(w, "internal error", 500)
+				return
+			}
 		}
+
 		var info SessionInfo
 		if err := json.Unmarshal(entry.Value(), &info); err != nil {
 			http.Error(w, "invalid session info", 500)
 			return
 		}
+
+		termSubj := fmt.Sprintf("terminal.session.%s.event", sid)
+		if !slices.Contains(info.Subscriptions, termSubj) {
+			info.Subscriptions = append(info.Subscriptions, termSubj)
+			slices.Sort(info.Subscriptions)
+			data, _ := json.Marshal(info)
+			// Update the KV store with the corrected list
+			if _, putErr := kv.Put(ctx, sid, data); putErr != nil {
+				slog.Error("UIStream: Failed to update session KV with terminal sub", "sid", sid, "err", putErr)
+				// Don't fail the request, just log it. Proceed with the in-memory list.
+			}
+		}
+
 		if len(info.Subscriptions) == 0 {
 			http.Error(w, "no subscriptions", 404)
 			return
 		}
 
-		// Render grid for initial subscriptions
+		// Render grid for initial subscriptions (using the now-complete list)
 		{
-			grid := components.SubscriptionsGrid(info.Subscriptions)
+			// Filter out terminal subjects before rendering the grid
+			gridSubs := []string{}
+			for _, s := range info.Subscriptions {
+				if !strings.HasPrefix(s, "terminal.session.") {
+					gridSubs = append(gridSubs, s)
+				}
+			}
+			grid := components.SubscriptionsGrid(gridSubs)
 			_ = sse.MergeFragmentTempl(grid)
 		}
 
-		// Used to cancel the previous consumer
+		// --- Setup for watcher ---
 		consumerCancel := func() {}
 		consumerDone := make(chan struct{})
 
-		// Helper to test NATS wildcard match
 		subjectMatches := func(pattern, subj string) bool {
 			if pattern == subj {
 				return true
@@ -89,18 +129,16 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 			return len(sTok) == len(pTok)
 		}
 
-		// Helper to create a consumer and handler
 		createConsumer := func(subs []string) (context.CancelFunc, chan struct{}) {
 			cctx, ccancel := context.WithCancel(ctx)
 			cdone := make(chan struct{})
-
-			// copy subs to avoid data races
 			patterns := make([]string, len(subs))
 			copy(patterns, subs)
 
 			cons, err := js.CreateConsumer(ctx, "EVENT", jetstream.ConsumerConfig{
 				AckPolicy:      jetstream.AckNonePolicy,
 				FilterSubjects: subs,
+				DeliverPolicy:  jetstream.DeliverAllPolicy, // Crucial for replay
 			})
 			if err != nil {
 				slog.Warn("failed to create consumer", "err", err)
@@ -108,32 +146,62 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 				close(cdone)
 				return ccancel, cdone
 			}
+
 			go func() {
 				defer close(cdone)
 				_, err := cons.Consume(func(msg jetstream.Msg) {
+					// --- Terminal event special-case ---
+					if strings.HasPrefix(msg.Subject(), "terminal.session.") {
+						var evt struct {
+							LineID string `json:"line_id"`
+							Cmd    string `json:"cmd"`
+							Output string `json:"output"`
+						}
+						_ = json.Unmarshal(msg.Data(), &evt)
+						frozen := components.TerminalFrozenLine(evt.Cmd, evt.Output)
+						if err := sse.MergeFragmentTempl(frozen, datastar.WithSelectorID("term-"+evt.LineID)); err != nil {
+							slog.Warn("freeze fail", "err", err)
+						}
+						nextNum := 1
+						if len(evt.LineID) > 1 {
+							fmt.Sscanf(evt.LineID[1:], "%d", &nextNum)
+							nextNum++
+						}
+						nextID := fmt.Sprintf("L%d", nextNum)
+						promptFrag := components.TerminalPrompt(nextID)
+						if err := sse.MergeFragmentTempl(promptFrag, datastar.WithSelectorID("terminal-lines"), datastar.WithMergeAppend()); err != nil {
+							slog.Warn("prompt fail", "err", err)
+						}
+						return
+					}
+
+					// --- Generic path ---
 					frag := dispatchToRenderer(msg)
 					if frag == nil {
 						return
 					}
+					subj := msg.Subject()
 					for _, pat := range patterns {
-						if subjectMatches(pat, msg.Subject()) {
+						if subjectMatches(pat, subj) {
 							target := subjToID(pat) + "-msg"
 							if err := sse.MergeFragmentTempl(frag, datastar.WithSelectorID(target), datastar.WithMergeAppend()); err != nil {
-								slog.Warn("Failed to send fragment", "err", err)
+								slog.Warn("send fail", "err", err)
 							}
+							break // Important: Render only once per message
 						}
 					}
 				})
 				if err != nil {
-					slog.Warn("failed to consume", "err", err)
+					slog.Warn("consume failed", "err", err)
 				}
 				<-cctx.Done()
 			}()
 			return ccancel, cdone
 		}
 
-		// Start initial consumer
-		consumerCancel, consumerDone = createConsumer(info.Subscriptions)
+		// --- Start initial consumer ---
+		currentSubs := info.Subscriptions // Already includes terminal and is sorted
+		consumerCancel, consumerDone = createConsumer(currentSubs)
 
 		// --- Watch for live updates ---
 		watcher, err := kv.Watch(ctx, sid)
@@ -141,48 +209,54 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 			http.Error(w, "failed to watch session", 500)
 			return
 		}
+		defer watcher.Stop()
 
 		go func() {
-			currentSubs := info.Subscriptions
 			for update := range watcher.Updates() {
-				// Ignore nil sentinel (initial replay complete)
 				if update == nil {
 					continue
 				}
 				if update.Operation() == jetstream.KeyValueDelete {
-					cancel() // closes the SSE stream
+					cancel()
 					return
 				}
+
 				var newInfo SessionInfo
-				if err := json.Unmarshal(update.Value(), &newInfo); err != nil {
-					slog.Warn("invalid session info", "err", err)
-					cancel()
-					return
+				_ = json.Unmarshal(update.Value(), &newInfo)
+				newSubs := newInfo.Subscriptions
+				// Ensure terminal sub is present for comparison
+				if !slices.Contains(newSubs, termSubj) {
+					newSubs = append(newSubs, termSubj)
 				}
-				if len(newInfo.Subscriptions) == 0 {
-					cancel()
-					return
-				}
-				// Only rebuild if subscriptions changed
-				subsChanged := len(newInfo.Subscriptions) != len(currentSubs)
+				slices.Sort(newSubs)
+
+				// Compare sorted lists
+				subsChanged := len(newSubs) != len(currentSubs)
 				if !subsChanged {
-					for i, s := range newInfo.Subscriptions {
-						if s != currentSubs[i] {
+					for i := range newSubs {
+						if newSubs[i] != currentSubs[i] {
 							subsChanged = true
 							break
 						}
 					}
 				}
+
 				if subsChanged {
-					// send new grid morph
-					grid := components.SubscriptionsGrid(newInfo.Subscriptions)
+					// Render grid update using actual KV subs (filter out terminal)
+					gridSubs := []string{}
+					for _, s := range newInfo.Subscriptions {
+						if !strings.HasPrefix(s, "terminal.session.") {
+							gridSubs = append(gridSubs, s)
+						}
+					}
+					grid := components.SubscriptionsGrid(gridSubs)
 					_ = sse.MergeFragmentTempl(grid)
 
-					// recreate consumer
+					// Recreate consumer with new (sorted, terminal-inclusive) list
 					consumerCancel()
 					<-consumerDone
-					consumerCancel, consumerDone = createConsumer(newInfo.Subscriptions)
-					currentSubs = newInfo.Subscriptions
+					consumerCancel, consumerDone = createConsumer(newSubs)
+					currentSubs = newSubs
 				}
 			}
 		}()

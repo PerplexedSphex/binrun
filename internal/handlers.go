@@ -2,7 +2,10 @@ package core
 
 import (
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"net/http"
+	"slices"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/nats-io/nats.go"
@@ -55,14 +58,56 @@ func LoadPresetHandler(js jetstream.JetStream) http.HandlerFunc {
 				return
 			}
 		}
+		// Ensure terminal subscription is included
 		sid := SessionID(r)
-		kv, _ := js.KeyValue(r.Context(), "sessions")
+		termSubj := fmt.Sprintf("terminal.session.%s.event", sid)
+		if !slices.Contains(subs, termSubj) {
+			subs = append(subs, termSubj)
+		}
+		slices.Sort(subs) // Sort for consistency
+
+		// Update the session KV
+		kv, err := js.KeyValue(r.Context(), "sessions")
+		if err != nil {
+			slog.Error("LoadPresetHandler: Failed to get KV", "err", err)
+			http.Error(w, "internal error", 500)
+			return
+		}
 		info := SessionInfo{Subscriptions: subs}
 		data, _ := json.Marshal(info)
 		if _, err := kv.Put(r.Context(), sid, data); err != nil {
+			slog.Error("LoadPresetHandler: Failed to put KV", "sid", sid, "err", err)
 			http.Error(w, err.Error(), 500)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// TerminalCommandHandler publishes the JSON body to terminal.session.<sid>.command.
+func TerminalCommandHandler(js jetstream.JetStream) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sid := SessionID(r)
+		var body map[string]any
+
+		// Attempt to parse as form (handles urlencoded and multipart).
+		if err := r.ParseMultipartForm(10 << 20); err == nil && (len(r.Form) > 0 || len(r.PostForm) > 0 || (r.MultipartForm != nil && len(r.MultipartForm.Value) > 0)) {
+			lineID := r.FormValue("line_id")
+			cmd := r.FormValue("cmd")
+			body = map[string]any{"line_id": lineID, "cmd": cmd}
+		} else {
+			// fallback to JSON body
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "bad body", 400)
+				return
+			}
+		}
+		subj := fmt.Sprintf("terminal.session.%s.command", sid)
+		data, _ := json.Marshal(body)
+		if _, err := js.Publish(r.Context(), subj, data); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
 	}
 }

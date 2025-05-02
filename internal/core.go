@@ -57,6 +57,17 @@ func Run(ctx context.Context, nc *nats.Conn, ns *server.Server) {
 	}()
 	// --- End ScriptRunner activation ---
 
+	// --- Activate TerminalEngine ---
+	te := NewTerminalEngine(js)
+	go func() {
+		if err := te.Start(ctx); err != nil {
+			slog.Error("TerminalEngine error", "err", err)
+		} else {
+			slog.Info("TerminalEngine started successfully")
+		}
+	}()
+	// --- End TerminalEngine activation ---
+
 	// 4. Create JetStream streams for commands and events (new API).
 	_, err = js.CreateStream(ctx, jetstream.StreamConfig{
 		Name:      "COMMAND",
