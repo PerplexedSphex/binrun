@@ -1,0 +1,28 @@
+package components
+
+import (
+	"strings"
+)
+
+func toID(subject string) string {
+	s := strings.ReplaceAll(subject, ".", "-")
+	s = strings.ReplaceAll(s, ">", "fullwild")
+	s = strings.ReplaceAll(s, "*", "wild")
+	return "sub-" + s
+}
+
+templ SubscriptionsGrid(subjects []string) {
+    <div id="main-panel-content" class="subscriptions-grid">
+        for _, subject := range subjects {
+            @SubscriptionContainer(subject)
+        }
+    </div>
+} 
+
+templ SubscriptionContainer(subject string) {
+	<section id={toID(subject)} class="subscription-box">
+		<h4>{subject}</h4>
+		<div id={toID(subject)+"-msg"} class="messages"></div>
+	</section>
+} 
+

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 64 64"
+  width="64"
+  height="64"
+>
+  <!-- Orange circle with white outline -->
+  <circle
+    cx="32"
+    cy="32"
+    r="30"
+    fill="rgb(246, 139, 31)"
+    stroke="#ffffff"
+    stroke-width="4"
+  />
+
+  <!-- Fast-forward arrows -->
+  <!-- Left chevron -->
+  <polygon
+    points="16,16 32,32 16,48"
+    fill="#ffffff"
+  />
+  <!-- Right chevron -->
+  <polygon
+    points="32,16 48,32 32,48"
+    fill="#ffffff"
+  />
+</svg>

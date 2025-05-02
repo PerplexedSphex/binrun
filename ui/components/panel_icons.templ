@@ -1,0 +1,87 @@
+package components
+
+templ PanelLeftToggle() {
+        <!-- CLOSED  ▷  (arrow points right, panel is closed) -->
+        <svg viewBox="0 0 24 24"
+             width="24" height="24"
+             fill="var(--surface-1)"
+             stroke="var(--gray-6,currentColor)"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+             data-show="!$leftOpen">
+            <rect x="1" y="1" width="22" height="22" rx="2"/>
+            <path d="M7 1v22"/>
+            <path d="m12 9 3 3-3 3"/>   <!-- right-pointing chevron -->
+        </svg>
+
+        <!-- OPEN  ◁  (arrow points left, panel is open) -->
+        <svg viewBox="0 0 24 24"
+             width="24" height="24"
+             fill="var(--surface-1)"
+             stroke="var(--gray-6,currentColor)"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+             data-show="$leftOpen">
+            <rect x="1" y="1" width="22" height="22" rx="2"/>
+            <path d="M7 1v22"/>
+            <path d="m14 15-3-3 3-3"/>  <!-- left-pointing chevron -->
+        </svg>
+}
+
+templ PanelBottomToggle() {
+        <!-- CLOSED  ▽  -->
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            width="24" height="24"
+            fill="var(--surface-1)"
+            stroke="var(--gray-6, currentColor)"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            class="icon icon-close"
+            data-show="$bottomOpen"
+        >
+            <rect width="22" height="22" x="1" y="1" rx="2"/>
+            <path d="M1 15h22"/>
+            <path d="m15 8-3 3-3-3"/>
+        </svg>
+
+        <!-- OPEN  △  -->
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            width="24" height="24"
+            fill="var(--surface-1)"
+            stroke="var(--gray-6, currentColor)"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            class="icon icon-open"
+            data-show="!$bottomOpen"
+        >
+            <rect width="22" height="22" x="1" y="1" rx="2"/>
+            <path d="M1 15h22"/>
+            <path d="m9 10 3-3 3 3"/>
+        </svg>
+}
+
+templ PanelRightToggle() {
+        <!-- CLOSED  ◁  (arrow points left, panel is closed) -->
+        <svg viewBox="0 0 24 24"
+             width="24" height="24"
+             fill="var(--surface-1)"
+             stroke="var(--gray-6,currentColor)"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+             data-show="!$rightOpen">
+            <rect x="1" y="1" width="22" height="22" rx="2"/>
+            <path d="M17 1v22"/>
+            <path d="m12 15-3-3 3-3"/>  <!-- left chevron, centered -->
+        </svg>
+
+        <!-- OPEN  ▷  (arrow points right, panel is open) -->
+        <svg viewBox="0 0 24 24"
+             width="24" height="24"
+             fill="var(--surface-1)"
+             stroke="var(--gray-6,currentColor)"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+             data-show="$rightOpen">
+            <rect x="1" y="1" width="22" height="22" rx="2"/>
+            <path d="M17 1v22"/>
+            <path d="m10 9 3 3-3 3"/>   <!-- right chevron, centered -->
+        </svg>
+}

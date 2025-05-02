@@ -1,0 +1,163 @@
+package ui
+
+import (
+	"fmt"
+	"time"
+
+    components "binrun/ui/components"
+)
+
+templ Index() {
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8"/>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+        <title>Binrun Control Panel</title>
+
+        <!-- Open Props -->
+        <link rel="stylesheet" href="https://unpkg.com/open-props/open-props.min.css"/>
+        <link rel="stylesheet" href="https://unpkg.com/open-props/normalize.min.css"/>
+        <link rel="stylesheet" href="https://unpkg.com/open-props/buttons.min.css"/>
+
+        <link rel="stylesheet" href={"/static/style.css?v=" + fmt.Sprint(time.Now().Unix())}/>
+        <link rel="icon" type="image/svg+xml" href="/favicon.svg"/>
+
+        <!-- Datastar -->
+        <script type="module"
+                src="https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.0-beta.11/bundles/datastar.js">
+        </script>
+    </head>
+
+    <!-- ❶ declare signals ❷ bind grid template via data-attr -->
+    <body
+        data-signals='{
+            "sidebarW": 300,
+            "rightW": 300,
+            "bottomH": 200,
+            "leftOpen": true,
+            "rightOpen": true,
+            "bottomOpen": true,
+            "drag": null
+        }'
+        data-attr="{style: 
+            'grid-template-columns:' +
+                $sidebarW + 'px ' +
+                ($leftOpen ? 'var(--handle-size)' : '0px') + ' ' +
+                '1fr var(--handle-size) ' + $rightW + 'px;' +
+            'grid-template-rows:auto 1fr var(--handle-size) ' + $bottomH + 'px;'
+        }"
+        data-persist   
+        data-on-load="@get('/ui', {openWhenHidden: true})">
+
+        <!-- sticky top bar -->
+        <header id="topbar">
+            <span class="brand">./binrun</span>
+            <div class="panel-icons">
+                <button
+                    class="icon-button"
+                    data-on-click="$leftOpen = !$leftOpen; $sidebarW = $leftOpen ? 300 : 0"
+                    aria-label="Toggle left panel"
+                >
+                    @components.PanelLeftToggle()
+                </button>
+                <button
+                    class="icon-button"
+                    data-on-click="$bottomOpen = !$bottomOpen; $bottomH = $bottomOpen ? 200 : 0 "
+                    aria-label="Toggle bottom panel"
+                >
+                    @components.PanelBottomToggle()
+                </button>
+                <button
+                    class="icon-button"
+                    data-on-click="$rightOpen = !$rightOpen; $rightW = $rightOpen ? 300 : 0"
+                    aria-label="Toggle right panel"
+                >
+                    @components.PanelRightToggle()
+                </button>
+            </div>
+        </header>
+
+        <!-- left sidebar -->
+        <aside id="left-panel" data-show="$leftOpen">
+            <div id="left-panel-content"></div>
+        </aside>
+
+        <!-- handle between left & main -->
+        <div class="handle-v handle-left"
+            data-show="$leftOpen"
+             data-on-pointerdown="
+                 $drag='left';
+                 evt.target.setPointerCapture(evt.pointerId);
+                 document.body.classList.add('dragging');
+             "
+             data-on-pointermove="
+                 $drag==='left' &&
+                   ($sidebarW = Math.min(
+                       Math.max(evt.clientX, 120),
+                       innerWidth - $rightW - 200
+                   ))
+             "
+             data-on-pointerup="
+                 $drag=null;
+                 document.body.classList.remove('dragging');
+             "
+             ></div>
+
+        <!-- main panel -->
+        <main id="main-panel">
+            <div id="main-panel-content"></div>
+        </main>
+
+        <!-- handle between main & right -->
+        <div class="handle-v handle-right"
+            data-show="$rightOpen"
+             data-on-pointerdown="
+                 $drag='right';
+                 evt.target.setPointerCapture(evt.pointerId);
+                 document.body.classList.add('dragging');
+             "
+             data-on-pointermove="
+                 $drag==='right' &&
+                   ($rightW = Math.min(
+                       Math.max(innerWidth - evt.clientX, 120),
+                       innerWidth - $sidebarW - 200
+                   ))
+             "
+             data-on-pointerup="
+                 $drag=null;
+                 document.body.classList.remove('dragging');
+             "></div>
+
+        <!-- right sidebar -->
+        <aside id="right-panel" data-show="$rightOpen">
+            <div id="right-panel-content"></div>
+        </aside>
+
+        <!-- horizontal handle -->
+        <div class="handle-h handle-bottom"
+            data-show="$bottomOpen"
+             data-on-pointerdown="
+                 $drag='bottom';
+                 evt.target.setPointerCapture(evt.pointerId);
+                 document.body.classList.add('dragging');
+             "
+             data-on-pointermove="
+                 $drag==='bottom' &&
+                   ($bottomH = Math.min(
+                       Math.max(innerHeight - evt.clientY, 120),
+                       innerHeight - 150
+                   ))
+             "
+             data-on-pointerup="
+                 $drag=null;
+                 document.body.classList.remove('dragging');
+             "></div>
+
+        <!-- bottom panel -->
+        <main id="bottom-panel" data-show="$bottomOpen">
+            <div id="bottom-panel-content"></div>
+        </main>
+    </body>
+    </html>
+}

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"math/rand"
 	"strings"
 	"time"
@@ -38,14 +38,24 @@ type SimConfig struct {
 }
 
 func Run(ctx context.Context, nc *nats.Conn, ns *server.Server) {
-	// 1. Use the provided embedded NATS server and client connection.
-	log.Println("Embedded NATS server started (JetStream enabled)")
 
 	// 3. Initialize JetStream context (new API)
 	js, err := jetstream.New(nc)
 	if err != nil {
-		log.Fatalf("JetStream context error: %v", err)
+		slog.Error("JetStream context error", "err", err)
+		return
 	}
+
+	// --- Activate ScriptRunner ---
+	sr := NewScriptRunner(nc, js, "./scripts")
+	go func() {
+		if err := sr.Start(ctx); err != nil {
+			slog.Error("ScriptRunner error", "err", err)
+		} else {
+			slog.Info("ScriptRunner started successfully")
+		}
+	}()
+	// --- End ScriptRunner activation ---
 
 	// 4. Create JetStream streams for commands and events (new API).
 	_, err = js.CreateStream(ctx, jetstream.StreamConfig{
@@ -55,7 +65,7 @@ func Run(ctx context.Context, nc *nats.Conn, ns *server.Server) {
 		Storage:   jetstream.FileStorage,
 	})
 	if err != nil {
-		log.Printf("Error adding COMMAND stream: %v", err)
+		slog.Warn("Error adding COMMAND stream", "err", err)
 	}
 	_, err = js.CreateStream(ctx, jetstream.StreamConfig{
 		Name:     "EVENT",
@@ -63,9 +73,9 @@ func Run(ctx context.Context, nc *nats.Conn, ns *server.Server) {
 		Storage:  jetstream.FileStorage,
 	})
 	if err != nil {
-		log.Printf("Error adding EVENT stream: %v", err)
+		slog.Warn("Error adding EVENT stream", "err", err)
 	}
-	log.Println("Streams 'COMMAND' and 'EVENT' created.")
+	slog.Info("Streams 'COMMAND' and 'EVENT' created.")
 
 	// 5. Create a Key-Value bucket "sessions" to track session subscriptions (new API).
 	kv, err := js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{
@@ -74,14 +84,15 @@ func Run(ctx context.Context, nc *nats.Conn, ns *server.Server) {
 		Storage: jetstream.FileStorage,
 	})
 	if err != nil {
-		log.Printf("Error creating KV bucket: %v", err)
+		slog.Warn("Error creating KV bucket", "err", err)
 	}
-	log.Println("KV bucket 'sessions' created for session subscription info.")
+	slog.Info("KV bucket 'sessions' created for session subscription info.")
 
 	// 6. Set up a watcher on the entire "sessions" bucket to catch changes (new API).
 	watcher, err := kv.Watch(ctx, jetstream.AllKeys)
 	if err != nil {
-		log.Fatalf("Failed to start KV watcher: %v", err)
+		slog.Error("Failed to start KV watcher", "err", err)
+		return
 	}
 	defer watcher.Stop()
 
@@ -89,7 +100,7 @@ func Run(ctx context.Context, nc *nats.Conn, ns *server.Server) {
 	go func() {
 		for update := range watcher.Updates() {
 			if update == nil {
-				log.Println("KV watcher initialized (current session states applied).")
+				slog.Info("KV watcher initialized (current session states applied).")
 				continue
 			}
 			sessionID := update.Key()
@@ -99,7 +110,7 @@ func Run(ctx context.Context, nc *nats.Conn, ns *server.Server) {
 			}
 			var info SessionInfo
 			if err := json.Unmarshal(update.Value(), &info); err != nil {
-				log.Printf("⚠️ Invalid session info for %q: %v", sessionID, err)
+				slog.Warn("Invalid session info", "sessionID", sessionID, "err", err)
 				continue
 			}
 			// Always delete old consumer (ignore error if not found)
@@ -113,14 +124,14 @@ func Run(ctx context.Context, nc *nats.Conn, ns *server.Server) {
 				FilterSubjects: info.Subscriptions,
 			})
 			if err != nil {
-				log.Printf("❌ Could not create consumer for session %q: %v", sessionID, err)
+				slog.Error("Could not create consumer for session", "sessionID", sessionID, "err", err)
 				continue
 			}
 			_, err = cons.Consume(func(msg jetstream.Msg) {
-				log.Printf("📥 Session %q received message on [%s]: %q", sessionID, msg.Subject(), string(msg.Data()))
+				slog.Info("Session received message", "sessionID", sessionID, "subject", msg.Subject(), "data", string(msg.Data()))
 			})
 			if err != nil {
-				log.Printf("❌ Consume failed for session %q: %v", sessionID, err)
+				slog.Error("Consume failed for session", "sessionID", sessionID, "err", err)
 			}
 		}
 	}()
@@ -134,17 +145,19 @@ func Run(ctx context.Context, nc *nats.Conn, ns *server.Server) {
 		DeliverPolicy:  jetstream.DeliverAllPolicy,
 	})
 	if err != nil {
-		log.Fatalf("Error creating work-queue consumer: %v", err)
+		slog.Error("Error creating work-queue consumer", "err", err)
+		return
 	}
 	_, err = cons.Consume(func(msg jetstream.Msg) {
-		log.Printf("⚙️  Processing command.x message: %q", string(msg.Data()))
+		slog.Info("Processing command.x message", "data", string(msg.Data()))
 		time.Sleep(100 * time.Millisecond)
 		msg.Ack()
 	})
 	if err != nil {
-		log.Fatalf("Error subscribing to work-queue consumer: %v", err)
+		slog.Error("Error subscribing to work-queue consumer", "err", err)
+		return
 	}
-	log.Println("Durable work-queue consumer 'COMMAND_X' (subject 'command.x') created and subscribed.")
+	slog.Info("Durable work-queue consumer 'COMMAND_X' (subject 'command.x') created and subscribed.")
 
 	// 9. Create a mirrored stream to monitor post-processed command.x messages.
 	_, err = js.CreateStream(ctx, jetstream.StreamConfig{
@@ -157,21 +170,22 @@ func Run(ctx context.Context, nc *nats.Conn, ns *server.Server) {
 		Retention: jetstream.LimitsPolicy,
 	})
 	if err != nil {
-		log.Fatalf("Error creating mirrored stream: %v", err)
+		slog.Error("Error creating mirrored stream", "err", err)
+		return
 	}
-	log.Println("Stream 'COMMANDX_MIRROR' created (mirroring all 'command.x' messages from COMMAND).")
+	slog.Info("Stream 'COMMANDX_MIRROR' created (mirroring all 'command.x' messages from COMMAND).")
 
 	// 10. (Optional) Additional stream transformations can be configured here if supported by your NATS server version.
 
 	// The server is now configured and will automatically handle new sessions and messages.
-	log.Println("🚀 JetStream in-process system is up. You can now use NATS CLI to interact with it.")
+	slog.Info("🚀 JetStream in-process system is up. You can now use NATS CLI to interact with it.")
 	<-ctx.Done()
-	log.Println("Run: shutdown requested")
+	slog.Info("Run: shutdown requested")
 }
 
 // Sim runs a deterministic, parameterized scenario against a fresh in-memory NATS+JetStream server.
 func Sim(ctx context.Context, cfg SimConfig) error {
-	log.Printf("Sim: starting scenario with %+v", cfg)
+	slog.Info("Sim: starting scenario with", "cfg", cfg)
 
 	// 1. Start a new in-memory, in-process NATS server
 	ns, err := server.NewServer(&server.Options{
@@ -251,7 +265,7 @@ func Sim(ctx context.Context, cfg SimConfig) error {
 	if err != nil {
 		return fmt.Errorf("Sim: error creating KV bucket: %w", err)
 	}
-	log.Println("Sim: environment reset complete")
+	slog.Info("Sim: environment reset complete")
 
 	subjects := make([]string, cfg.NumSubjectsPerSession)
 	for j := 0; j < cfg.NumSubjectsPerSession; j++ {
@@ -267,7 +281,7 @@ func Sim(ctx context.Context, cfg SimConfig) error {
 			return fmt.Errorf("Sim: failed to put session %s: %w", sessionID, err)
 		}
 	}
-	log.Printf("Sim: created %d sessions", cfg.NumSessions)
+	slog.Info("Sim: created", "numSessions", cfg.NumSessions)
 
 	// 6. Publish events to each subject
 	for j := 0; j < cfg.NumSubjectsPerSession; j++ {
@@ -279,7 +293,7 @@ func Sim(ctx context.Context, cfg SimConfig) error {
 			}
 		}
 	}
-	log.Printf("Sim: published %d events per subject to %d subjects", cfg.NumEventsPerSubject, cfg.NumSubjectsPerSession)
+	slog.Info("Sim: published", "numEventsPerSubject", cfg.NumEventsPerSubject, "numSubjectsPerSession", cfg.NumSubjectsPerSession)
 
 	// 7. Publish command.x messages
 	for l := 0; l < cfg.NumCommands; l++ {
@@ -287,16 +301,16 @@ func Sim(ctx context.Context, cfg SimConfig) error {
 			return fmt.Errorf("Sim: publish command.x: %w", err)
 		}
 	}
-	log.Printf("Sim: published %d command.x messages", cfg.NumCommands)
+	slog.Info("Sim: published", "numCommands", cfg.NumCommands)
 
 	// 8. Churn: randomly delete sessions
 	for i := 0; i < cfg.SessionChurn; i++ {
 		sessionID := fmt.Sprintf("session-%d", rand.Intn(cfg.NumSessions))
 		if err := kv.Delete(ctx, sessionID); err != nil {
-			log.Printf("Sim: warning: failed to delete session %s: %v", sessionID, err)
+			slog.Warn("Sim: warning: failed to delete session", "sessionID", sessionID, "err", err)
 		}
 	}
-	log.Printf("Sim: churned %d sessions", cfg.SessionChurn)
+	slog.Info("Sim: churned", "numSessions", cfg.SessionChurn)
 
 	// 9. Inspection/assertions
 	// Wait for all messages to be processed (simple sleep, could poll for more accuracy)
@@ -314,7 +328,7 @@ func Sim(ctx context.Context, cfg SimConfig) error {
 	if minfo.State.Msgs != uint64(cfg.NumCommands) {
 		return fmt.Errorf("Sim: mirror has %d msgs, want %d", minfo.State.Msgs, cfg.NumCommands)
 	}
-	log.Printf("Sim: mirror stream has correct message count: %d", minfo.State.Msgs)
+	slog.Info("Sim: mirror stream has correct message count", "msgCount", minfo.State.Msgs)
 
 	if cfg.InspectionLevel > 0 {
 		// For each session, check that it exists or was deleted, and optionally check event delivery
@@ -322,7 +336,7 @@ func Sim(ctx context.Context, cfg SimConfig) error {
 			sessionID := fmt.Sprintf("session-%d", i)
 			_, err := kv.Get(ctx, sessionID)
 			if err != nil && cfg.SessionChurn > 0 {
-				log.Printf("Sim: session %s deleted (expected if churned)", sessionID)
+				slog.Info("Sim: session deleted (expected if churned)", "sessionID", sessionID)
 				continue
 			} else if err != nil {
 				return fmt.Errorf("Sim: session %s missing: %w", sessionID, err)
@@ -331,10 +345,10 @@ func Sim(ctx context.Context, cfg SimConfig) error {
 				// Optionally, check event delivery for this session (not implemented: would require per-session durable consumer or pull)
 			}
 		}
-		log.Printf("Sim: session existence checks complete")
+		slog.Info("Sim: session existence checks complete")
 	}
 
-	log.Println("Sim: scenario PASSED")
+	slog.Info("Sim: scenario PASSED")
 	return nil
 }
 

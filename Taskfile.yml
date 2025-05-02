@@ -71,6 +71,7 @@ tasks:
     sources:
       - "**/*.go"
       - "**/*.templ"
+      - "**/*.css"
     deps: [kill, build]
     cmds:
       - "{{.BIN_DIR}}/{{.BIN_NAME}}"

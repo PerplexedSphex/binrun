@@ -1,9 +1,12 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"net/url"
 	"time"
+
+	"log/slog"
 
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
@@ -20,13 +23,13 @@ type EmbeddedServerConfig struct {
 	StoreDir        string // optional, for JetStream file storage
 }
 
-// RunEmbeddedServer starts an embedded NATS server with the given config and returns a client connection and the server instance.
-func RunEmbeddedServer(cfg EmbeddedServerConfig) (*nats.Conn, *server.Server, error) {
+// RunEmbeddedServer starts an embedded NATS server with the given config and returns a client connection, the server instance, and an error channel.
+func RunEmbeddedServer(ctx context.Context, cfg EmbeddedServerConfig) (*nats.Conn, *server.Server, <-chan error, error) {
 	var leafRemotes []*server.RemoteLeafOpts
 	if cfg.LeafNodeURL != "" {
 		leafURL, err := url.Parse(cfg.LeafNodeURL)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		leafRemotes = []*server.RemoteLeafOpts{{
 			URLs:        []*url.URL{leafURL},
@@ -47,14 +50,14 @@ func RunEmbeddedServer(cfg EmbeddedServerConfig) (*nats.Conn, *server.Server, er
 
 	ns, err := server.NewServer(opts)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if cfg.EnableLogging {
-		ns.ConfigureLogger()
+		ns.SetLogger(NewNATSServerLogger(slog.Default()), false, false)
 	}
 	go ns.Start()
 	if !ns.ReadyForConnections(5 * time.Second) {
-		return nil, nil, errors.New("NATS Server timeout")
+		return nil, nil, nil, errors.New("NATS Server timeout")
 	}
 
 	clientOpts := []nats.Option{}
@@ -64,8 +67,15 @@ func RunEmbeddedServer(cfg EmbeddedServerConfig) (*nats.Conn, *server.Server, er
 
 	nc, err := nats.Connect(ns.ClientURL(), clientOpts...)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
-	return nc, ns, nil
+	errCh := make(chan error, 1)
+	go func() {
+		<-ctx.Done()
+		ns.Shutdown()
+		errCh <- ctx.Err()
+	}()
+
+	return nc, ns, errCh, nil
 }

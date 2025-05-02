@@ -32,3 +32,6 @@ bin/
 
 # taskfile checksums
 .task/
+
+# TLS certs
+local_certs/

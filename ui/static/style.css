@@ -1,0 +1,152 @@
+:root { --handle-size: 4px; }
+
+html, body {
+    font-family: monospace;
+    height: 100dvh; /* 100 % of the viewport, no growing */
+    display: grid;
+    grid-template-rows: auto 1fr;
+    /* The rest of your grid-template-columns is set dynamically via data-attr */
+}
+
+body {
+    min-height: 100vh;
+    margin: 0;
+    display: grid; /* columns/rows are patched by Datastar */
+}
+
+/* panels */
+#left-panel, #right-panel, #main-panel, #bottom-panel {
+    background: var(--surface-1);
+    overflow: auto;
+}
+#main-panel { background: var(--surface-2); overflow: auto;}
+#bottom-panel { background: var(--surface-1); overflow: auto;}
+
+aside, main { padding: var(--size-3); box-sizing: border-box; }
+
+/* handles */
+.handle-v, .handle-h {
+    background: var(--surface-4);
+    position: relative;
+    z-index: 10;
+}
+.handle-v { cursor: ew-resize; width: var(--handle-size); }
+.handle-h { cursor: ns-resize; height: var(--handle-size); }
+
+.dragging * { user-select: none; cursor: grabbing !important; } 
+
+/* SubscriptionContainer styles */
+.subscription-box {
+    height: var(--size-content-2);
+    overflow-y: auto;
+    border: var(--border-size-2) solid var(--surface-1);
+    border-radius: var(--radius-2);
+    /* margin: var(--size-); */
+    background: var(--surface-1);
+    box-shadow: var(--shadow-2);
+    display: flex;
+    flex-direction: column;
+}
+.subscription-box h4 {
+    margin: var(--size-2);
+}
+.subscription-box .messages {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-1);
+    flex: 1 1 auto;
+}
+
+/* SubscriptionsGrid styles */
+.subscriptions-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(var(--size-content-2, 80px), 1fr));
+    gap: var(--size-3);
+    width: 100%;
+}
+
+/* Topbar styles */
+#topbar {
+  position: sticky;
+  top: 0;
+  width: 100%;
+  height: var(--size-8);
+  background: var(--surface-1);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--size-2);
+  z-index: 100;
+  box-shadow: var(--shadow-3);
+}
+#topbar .brand {
+  font-family: monospace;
+  font-weight: 600;
+  font-size: var(--size-3);
+}
+#topbar .panel-icons {
+  display: flex;
+  gap: var(--size-2);
+}
+/* square, icon-only flavour of the default .btn  */
+
+.icon-button {
+  /* geometry */
+  inline-size: var(--size-6);
+  block-size: var(--size-6);
+  padding: 0;                   /* remove default left/right padding */
+  gap: 0;                       /* no text, no icon–text gap         */
+
+  /* kill border so the SVG can hug the edge */
+  border: 0 solid var(--surface-1);
+
+  /* Open-Props per-button variables    */
+  --_bg-light: var(--surface-1);   /* default colour                   */
+  --_bg-dark : var(--surface-2);   /* hover / active colour            */
+  --_icon-size: 100%;              /* let the SVG grow to the square   */
+
+}
+
+/* make the strokes chunkier so they read well at 40 px */
+.icon-button svg * { stroke-width: 2.25 }
+
+/* Ensure main grid content starts at row 2 */
+
+#topbar {
+    grid-column: 1 / -1;
+    grid-row: 1;
+}
+
+#left-panel {
+    grid-column: 1;
+    grid-row: 2 / span 3;
+}
+#main-panel {
+    grid-column: 3;
+    grid-row: 2;
+}
+#right-panel {
+    grid-column: 5;
+    grid-row: 2 / span 3;
+}
+#bottom-panel {
+    grid-column: 3 / 4;
+    grid-row: 4;
+}
+.handle-v {
+    grid-row: 2 / span 3;
+}
+.handle-left {
+  grid-column: 2;
+}
+.handle-right {
+  grid-column: 4;
+}
+.handle-h {
+    grid-column: 3 / 4;
+    grid-row: 3;
+}
+.handle-bottom {
+  grid-column: 3 / 4;
+  grid-row: 3;
+}
