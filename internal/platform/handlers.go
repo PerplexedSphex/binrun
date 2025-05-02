@@ -1,4 +1,4 @@
-package core
+package platform
 
 import (
 	"encoding/json"
@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+
+	"binrun/internal/runtime"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/nats-io/nats.go"
@@ -46,13 +48,13 @@ func LoadPresetHandler(js jetstream.JetStream) http.HandlerFunc {
 		presetID := chi.URLParam(r, "preset")
 		var subs []string
 		switch presetID {
-		case PresetKeyScripts:
+		case runtime.PresetKeyScripts:
 			scriptName := r.URL.Query().Get("script")
 			jobID := r.URL.Query().Get("job")
-			subs = BuildScriptPreset(scriptName, jobID)
+			subs = runtime.BuildScriptPreset(scriptName, jobID)
 		default:
 			var ok bool
-			subs, ok = Presets[presetID]
+			subs, ok = runtime.Presets[presetID]
 			if !ok {
 				http.Error(w, "unknown preset", 404)
 				return

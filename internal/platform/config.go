@@ -1,6 +1,6 @@
 // (file intentionally left blank for now; config logic will be added here)
 
-package core
+package platform
 
 // import "time"
 

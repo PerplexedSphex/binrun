@@ -1,4 +1,4 @@
-package core
+package runtime
 
 import (
 	"context"
@@ -105,7 +105,7 @@ func renderJobExit(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerS
 
 // ─────────────────── REGISTRY ──────────────────────────
 
-var Renderers = []renderer{
+var Renderers = []Renderer{
 	// terminal
 	newSubRenderer[TerminalEvent]("terminal.session.*.event", renderTerminal),
 

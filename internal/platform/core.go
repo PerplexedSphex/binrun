@@ -1,4 +1,4 @@
-package core
+package platform
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 	"math/rand"
 	"strings"
 	"time"
+
+	"binrun/internal/runtime"
 
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
@@ -47,7 +49,7 @@ func Run(ctx context.Context, nc *nats.Conn, ns *server.Server) {
 	}
 
 	// --- Activate ScriptRunner ---
-	sr := NewScriptRunner(nc, js, "./scripts")
+	sr := runtime.NewScriptRunner(nc, js, "./scripts")
 	go func() {
 		if err := sr.Start(ctx); err != nil {
 			slog.Error("ScriptRunner error", "err", err)
@@ -58,7 +60,7 @@ func Run(ctx context.Context, nc *nats.Conn, ns *server.Server) {
 	// --- End ScriptRunner activation ---
 
 	// --- Activate TerminalEngine ---
-	te := NewTerminalEngine(js)
+	te := runtime.NewTerminalEngine(js)
 	go func() {
 		if err := te.Start(ctx); err != nil {
 			slog.Error("TerminalEngine error", "err", err)

@@ -1,14 +1,16 @@
 package components
 
 import (
-	"strings"
+	"binrun/util"
 )
 
 func toID(subject string) string {
-	s := strings.ReplaceAll(subject, ".", "-")
-	s = strings.ReplaceAll(s, ">", "fullwild")
-	s = strings.ReplaceAll(s, "*", "wild")
-	return "sub-" + s
+	// util.SelectorFor returns "#sub-...", but we want just the id part
+	sel := util.SelectorFor(subject)
+	if len(sel) > 0 && sel[0] == '#' {
+		return sel[1:]
+	}
+	return sel
 }
 
 templ SubscriptionsGrid(subjects []string) {

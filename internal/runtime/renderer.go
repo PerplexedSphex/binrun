@@ -1,4 +1,4 @@
-package core
+package runtime
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+
+	"binrun/util"
 
 	"github.com/a-h/templ"
 	"github.com/nats-io/nats.go/jetstream"
@@ -15,23 +17,23 @@ import (
 // RenderFuncB: minimal signature – render given message into the SSE stream.
 type RenderFuncB func(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator) error
 
-type renderer struct {
-	pattern string
-	match   func(string) bool
-	fn      RenderFuncB
+type Renderer struct {
+	Pattern    string
+	MatchFunc  func(string) bool
+	RenderFunc RenderFuncB
 }
 
 // newRenderer creates a renderer matching a specific subject pattern (with wildcards).
-func newRenderer(pattern string, fn RenderFuncB) renderer {
-	return renderer{
-		pattern: pattern,
-		match:   func(subj string) bool { return SubjectMatches(pattern, subj) },
-		fn:      fn,
+func newRenderer(pattern string, fn RenderFuncB) Renderer {
+	return Renderer{
+		Pattern:    pattern,
+		MatchFunc:  func(subj string) bool { return util.SubjectMatches(pattern, subj) },
+		RenderFunc: fn,
 	}
 }
 
 // newTypedRenderer decodes the JSON payload into T and invokes handler.
-func newTypedRenderer[T any](pattern string, handler func(context.Context, jetstream.Msg, *datastar.ServerSentEventGenerator, T) error) renderer {
+func newTypedRenderer[T any](pattern string, handler func(context.Context, jetstream.Msg, *datastar.ServerSentEventGenerator, T) error) Renderer {
 	return newRenderer(pattern, func(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator) error {
 		var p T
 		dec := json.NewDecoder(bytes.NewReader(msg.Data()))
@@ -44,8 +46,8 @@ func newTypedRenderer[T any](pattern string, handler func(context.Context, jetst
 }
 
 // Helper for subscription message-box renderers that want a precomputed selector.
-func newSubRenderer[T any](pattern string, handler func(context.Context, jetstream.Msg, *datastar.ServerSentEventGenerator, string, T) error) renderer {
-	sel := SelectorFor(pattern) + "-msg"
+func newSubRenderer[T any](pattern string, handler func(context.Context, jetstream.Msg, *datastar.ServerSentEventGenerator, string, T) error) Renderer {
+	sel := util.SelectorFor(pattern) + "-msg"
 	return newTypedRenderer[T](pattern, func(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator, p T) error {
 		return handler(ctx, msg, sse, sel, p)
 	})
@@ -55,7 +57,7 @@ func newSubRenderer[T any](pattern string, handler func(context.Context, jetstre
 var fallback = newRenderer(
 	">",
 	func(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator) error {
-		selector := SelectorFor(msg.Subject()) + "-msg"
+		selector := util.SelectorFor(msg.Subject()) + "-msg"
 		frag := templ.ComponentFunc(func(_ context.Context, w io.Writer) error {
 			_, _ = fmt.Fprintf(w, "<pre>%s\n%s</pre>", msg.Subject(), string(msg.Data()))
 			return nil

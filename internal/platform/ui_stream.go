@@ -1,4 +1,4 @@
-package core
+package platform
 
 import (
 	"context"
@@ -11,6 +11,8 @@ import (
 	components "binrun/ui/components"
 
 	"slices"
+
+	"binrun/internal/runtime"
 
 	"github.com/nats-io/nats.go/jetstream"
 	datastar "github.com/starfederation/datastar/sdk/go"
@@ -109,9 +111,9 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 				defer close(cdone)
 				_, err := cons.Consume(func(msg jetstream.Msg) {
 					// New unified dispatch via Renderers registry
-					for _, r := range Renderers {
-						if r.match(msg.Subject()) {
-							if err := r.fn(ctx, msg, sse); err != nil {
+					for _, r := range runtime.Renderers {
+						if r.MatchFunc(msg.Subject()) {
+							if err := r.RenderFunc(ctx, msg, sse); err != nil {
 								slog.Warn("render", "subj", msg.Subject(), "err", err)
 							}
 							break

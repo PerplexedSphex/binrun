@@ -1,10 +1,9 @@
-package core
+package util
 
 import "strings"
 
 // SubjectMatches reports whether a subject matches a pattern that can include
-// NATS wildcards * (one token) and > (greedy remainder). Behaviour is
-// intentionally kept identical to the prior inline implementation in ui_stream.go.
+// NATS wildcards * (one token) and > (greedy remainder).
 func SubjectMatches(pattern, subj string) bool {
 	if pattern == subj {
 		return true
@@ -32,10 +31,7 @@ func SubjectMatches(pattern, subj string) bool {
 }
 
 // SelectorFor converts a NATS subject into a CSS selector targeting the
-// element whose id is derived from the subject. This consolidates the logic
-// previously duplicated in multiple places (subjToID, toID). The returned
-// selector is of the form "#sub-<id>" where dots become dashes, * → "wild",
-// and > → "fullwild" so that the id is DOM-safe.
+// element whose id is derived from the subject.
 func SelectorFor(subj string) string {
 	replacer := strings.NewReplacer(
 		".", "-",

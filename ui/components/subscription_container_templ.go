@@ -6,17 +6,19 @@ package components
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
 import (
-	"strings"
+	"binrun/util"
 
 	"github.com/a-h/templ"
 	templruntime "github.com/a-h/templ/runtime"
 )
 
 func toID(subject string) string {
-	s := strings.ReplaceAll(subject, ".", "-")
-	s = strings.ReplaceAll(s, ">", "fullwild")
-	s = strings.ReplaceAll(s, "*", "wild")
-	return "sub-" + s
+	// util.SelectorFor returns "#sub-...", but we want just the id part
+	sel := util.SelectorFor(subject)
+	if len(sel) > 0 && sel[0] == '#' {
+		return sel[1:]
+	}
+	return sel
 }
 
 func SubscriptionsGrid(subjects []string) templ.Component {
@@ -86,7 +88,7 @@ func SubscriptionContainer(subject string) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(toID(subject))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/subscription_container.templ`, Line: 23, Col: 27}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/subscription_container.templ`, Line: 25, Col: 27}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -99,7 +101,7 @@ func SubscriptionContainer(subject string) templ.Component {
 		var templ_7745c5c3_Var4 string
 		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(subject)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/subscription_container.templ`, Line: 24, Col: 14}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/subscription_container.templ`, Line: 26, Col: 14}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
@@ -112,7 +114,7 @@ func SubscriptionContainer(subject string) templ.Component {
 		var templ_7745c5c3_Var5 string
 		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(toID(subject) + "-msg")
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/subscription_container.templ`, Line: 25, Col: 31}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/subscription_container.templ`, Line: 27, Col: 31}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 		if templ_7745c5c3_Err != nil {

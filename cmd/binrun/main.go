@@ -7,26 +7,26 @@ import (
 	"os/signal"
 	"syscall"
 
-	core "binrun/internal"
+	platform "binrun/internal/platform"
 )
 
 func main() {
-	core.InitLogger()
-	core.InitMetrics()
+	platform.InitLogger()
+	platform.InitMetrics()
 
-	appCfg := core.LoadAppConfig()
+	appCfg := platform.LoadAppConfig()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	if appCfg.Flags.Sim {
-		if err := core.Sim(ctx, *appCfg.SimCfg); err != nil {
+		if err := platform.Sim(ctx, *appCfg.SimCfg); err != nil {
 			slog.Error("Sim failed", "err", err)
 		}
 		return
 	}
 
-	nc, ns, natErrCh, err := core.RunEmbeddedServer(ctx, *appCfg.NatsCfg)
+	nc, ns, natErrCh, err := platform.RunEmbeddedServer(ctx, *appCfg.NatsCfg)
 	if err != nil {
 		slog.Error("embedded server start", "err", err)
 		return
@@ -35,7 +35,7 @@ func main() {
 
 	var httpErrCh <-chan error
 	if !appCfg.Flags.Headless {
-		httpErrCh = core.RunHTTPServer(ctx, nc, *appCfg.HTTPSrvCfg)
+		httpErrCh = platform.RunHTTPServer(ctx, nc, *appCfg.HTTPSrvCfg)
 	} else {
 		slog.Info("Headless flag active – HTTP server not started")
 		ch := make(chan error, 1)
@@ -48,7 +48,7 @@ func main() {
 		runErrCh = rc
 		go func() {
 			// start JetStream scaffolding; blocks until ctx done
-			core.Run(ctx, nc, ns)
+			platform.Run(ctx, nc, ns)
 			rc <- ctx.Err()
 		}()
 	}
