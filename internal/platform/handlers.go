@@ -62,7 +62,7 @@ func LoadPresetHandler(js jetstream.JetStream) http.HandlerFunc {
 		}
 		// Ensure terminal subscription is included
 		sid := SessionID(r)
-		termSubj := fmt.Sprintf("terminal.session.%s.event", sid)
+		termSubj := fmt.Sprintf("event.terminal.session.%s.freeze", sid)
 		if !slices.Contains(subs, termSubj) {
 			subs = append(subs, termSubj)
 		}
@@ -94,9 +94,8 @@ func TerminalCommandHandler(js jetstream.JetStream) http.HandlerFunc {
 
 		// Attempt to parse as form (handles urlencoded and multipart).
 		if err := r.ParseMultipartForm(10 << 20); err == nil && (len(r.Form) > 0 || len(r.PostForm) > 0 || (r.MultipartForm != nil && len(r.MultipartForm.Value) > 0)) {
-			lineID := r.FormValue("line_id")
 			cmd := r.FormValue("cmd")
-			body = map[string]any{"line_id": lineID, "cmd": cmd}
+			body = map[string]any{"cmd": cmd}
 		} else {
 			// fallback to JSON body
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {

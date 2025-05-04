@@ -12,7 +12,7 @@ import (
 )
 
 // TerminalEngine interprets terminal.session.*.command messages.
-// It publishes terse feedback events to terminal.session.*.event.
+// It publishes terse feedback events to event.terminal.session.*.freeze.
 // Any side-effecting commands (script create/run) are forwarded to the existing COMMAND stream subjects.
 
 type TerminalEngine struct {
@@ -22,6 +22,8 @@ type TerminalEngine struct {
 func NewTerminalEngine(js jetstream.JetStream) *TerminalEngine {
 	return &TerminalEngine{js: js}
 }
+
+var helpRe = regexp.MustCompile(`^\s*help\s*$`)
 
 // Start creates a consumer on TERMINAL_CMD and blocks until ctx is done.
 func (te *TerminalEngine) Start(ctx context.Context) error {
@@ -59,12 +61,10 @@ func (te *TerminalEngine) Start(ctx context.Context) error {
 
 // commandPayload is what the browser posts to /terminal, forwarded unchanged.
 type commandPayload struct {
-	LineID string `json:"line_id"`
-	Cmd    string `json:"cmd"`
+	Cmd string `json:"cmd"`
 }
 
-type feedback struct {
-	LineID string `json:"line_id"`
+type freezeEvent struct {
 	Cmd    string `json:"cmd"`
 	Output string `json:"output"`
 }
@@ -86,7 +86,7 @@ func (te *TerminalEngine) handleCommand(ctx context.Context, msg jetstream.Msg) 
 
 	// Simple regex dispatch
 	switch {
-	case regexp.MustCompile(`^help$`).MatchString(in.Cmd):
+	case helpRe.MatchString(in.Cmd):
 		outText = "commands: help, echo <text>, script create <name> <lang>, script run <name>"
 
 	case strings.HasPrefix(in.Cmd, "echo "):
@@ -103,7 +103,7 @@ func (te *TerminalEngine) handleCommand(ctx context.Context, msg jetstream.Msg) 
 		payload := map[string]any{
 			"script_name":    name,
 			"script_type":    lang,
-			"correlation_id": in.LineID,
+			"correlation_id": in.Cmd,
 		}
 		_ = te.publishCommand(ctx, "command.script.create", payload)
 		outText = "script create requested"
@@ -119,7 +119,7 @@ func (te *TerminalEngine) handleCommand(ctx context.Context, msg jetstream.Msg) 
 		subj := fmt.Sprintf("command.script.%s.run", name)
 		payload := map[string]any{
 			"args":           args,
-			"correlation_id": in.LineID,
+			"correlation_id": in.Cmd,
 		}
 		_ = te.publishCommand(ctx, subj, payload)
 		outText = "script run requested"
@@ -128,11 +128,13 @@ func (te *TerminalEngine) handleCommand(ctx context.Context, msg jetstream.Msg) 
 		outText = "error: unknown command"
 	}
 
-	evt := feedback{LineID: in.LineID, Cmd: in.Cmd, Output: outText}
+	evt := freezeEvent{Cmd: in.Cmd, Output: outText}
 	data, _ := json.Marshal(evt)
-	evtSubj := fmt.Sprintf("terminal.session.%s.event", sid)
+	evtSubj := fmt.Sprintf("event.terminal.session.%s.freeze", sid)
 	if _, err := te.js.Publish(ctx, evtSubj, data); err != nil {
 		slog.Warn("terminal: publish feedback", "err", err)
+		_ = msg.Nak()
+		return
 	}
 	_ = msg.Ack()
 }

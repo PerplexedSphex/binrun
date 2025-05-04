@@ -13,31 +13,24 @@ import (
 // ─────────────────── TERMINAL EVENTS ───────────────────
 
 type TerminalEvent struct {
-	LineID string `json:"line_id"`
 	Cmd    string `json:"cmd"`
 	Output string `json:"output"`
 }
 
-func renderTerminal(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator, selector string, evt TerminalEvent) error {
-	// Replace prompt line with frozen echo + response
+func renderTerminal(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator, evt TerminalEvent) error {
+	// 1. append frozen line
 	if err := sse.MergeFragmentTempl(
 		components.TerminalFrozenLine(evt.Cmd, evt.Output),
-		datastar.WithSelectorID("term-"+evt.LineID),
+		datastar.WithSelectorID("terminal-frozen"),
+		datastar.WithMergeAppend(),
 	); err != nil {
 		return err
 	}
 
-	// Append next prompt (increment numeric part after leading 'L')
-	next := 1
-	if len(evt.LineID) > 1 {
-		fmt.Sscanf(evt.LineID[1:], "%d", &next)
-		next++
-	}
-	nextID := fmt.Sprintf("L%d", next)
+	// 2. replace live prompt
 	return sse.MergeFragmentTempl(
-		components.TerminalPrompt(nextID),
-		datastar.WithSelectorID("terminal-lines"),
-		datastar.WithMergeAppend(),
+		components.TerminalPrompt(),
+		datastar.WithSelectorID("live-prompt"),
 	)
 }
 
@@ -106,17 +99,16 @@ func renderJobExit(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerS
 // ─────────────────── REGISTRY ──────────────────────────
 
 var Renderers = []Renderer{
-	// terminal
-	newSubRenderer[TerminalEvent]("terminal.session.*.event", renderTerminal),
+	// terminal freeze events
+	newTypedRenderer[TerminalEvent]("event.terminal.session.*.freeze", renderTerminal),
 
 	// script lifecycle
-	newSubRenderer[ScriptCreated]("event.script.*.created", renderScriptCreated),
-	newSubRenderer[ScriptCreateErr]("event.script.*.create.error", renderScriptCreateErr),
-
-	newSubRenderer[ScriptJobStarted]("event.script.*.job.*.started", renderJobStarted),
-	newSubRenderer[ScriptJobOutput]("event.script.*.job.*.stdout", renderJobOutput),
-	newSubRenderer[ScriptJobOutput]("event.script.*.job.*.stderr", renderJobOutput),
-	newSubRenderer[ScriptJobExit]("event.script.*.job.*.exit", renderJobExit),
+	newSubRenderer("event.script.*.created", renderScriptCreated),
+	newSubRenderer("event.script.*.create.error", renderScriptCreateErr),
+	newSubRenderer("event.script.*.job.*.started", renderJobStarted),
+	newSubRenderer("event.script.*.job.*.stdout", renderJobOutput),
+	newSubRenderer("event.script.*.job.*.stderr", renderJobOutput),
+	newSubRenderer("event.script.*.job.*.exit", renderJobExit),
 
 	fallback, // last
 }

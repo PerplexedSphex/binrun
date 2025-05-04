@@ -3,23 +3,21 @@ package components
 // ... existing code ...
 
 templ Terminal() {
-    <div id="terminal" class="terminal" data-signals='{"nextID":1}'>
-        <div id="terminal-lines" class="terminal-lines">
-            @TerminalPrompt("L1")
-        </div>
+    <div id="terminal" class="terminal">
+        <div id="terminal-frozen" class="terminal-lines"></div>
+        @TerminalPrompt()
     </div>
 }
 
 // Render a new prompt line with given ID
-templ TerminalPrompt(id string) {
-    <div class="term-line" id={"term-"+id}>
+templ TerminalPrompt() {
+    <div class="term-line" id="live-prompt" data-scroll-into-view>
         <span class="prompt">&gt; </span>
         <form class="term-form"
-              data-on-submit="@post('/terminal', {contentType: 'form'}); $nextID++;">
-            <input type="hidden" name="line_id" value={id}/>
-            <input type="text" name="cmd" class="ghost-input" data-focus
+              data-on-submit="@post('/terminal', {contentType: 'form'}); this.reset();">
+            <input type="text" name="cmd" data-focus
                    autocomplete="off" spellcheck="false" />
-            <button type="submit" hidden></button>
+            <button type="submit" style="display: none;"></button>
         </form>
     </div>
 }
@@ -31,6 +29,9 @@ templ TerminalResponseSpan(out string) {
 
 // Frozen line: echo of command plus response
 templ TerminalFrozenLine(cmd string, out string) {
-    <span class="echo">{cmd}</span>
-    <span class="response">{out}</span>
+    <div class="term-line">
+        <span class="prompt">&gt; </span>
+        <span class="echo">{cmd}</span>
+        <span class="response">{out}</span>
+    </div>
 } 

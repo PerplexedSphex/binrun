@@ -33,7 +33,7 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 		if err != nil {
 			// Entry doesn't exist, create a default one with just terminal
 			slog.Info("UIStream: No session KV found, creating default", "sid", sid)
-			termSubj := fmt.Sprintf("terminal.session.%s.event", sid)
+			termSubj := fmt.Sprintf("event.terminal.session.%s.freeze", sid)
 			info := SessionInfo{Subscriptions: []string{termSubj}}
 			data, _ := json.Marshal(info)
 			if _, putErr := kv.Put(ctx, sid, data); putErr != nil {
@@ -57,7 +57,7 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 			return
 		}
 
-		termSubj := fmt.Sprintf("terminal.session.%s.event", sid)
+		termSubj := fmt.Sprintf("event.terminal.session.%s.freeze", sid)
 		if !slices.Contains(info.Subscriptions, termSubj) {
 			info.Subscriptions = append(info.Subscriptions, termSubj)
 			slices.Sort(info.Subscriptions)
@@ -79,7 +79,7 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 			// Filter out terminal subjects before rendering the grid
 			gridSubs := []string{}
 			for _, s := range info.Subscriptions {
-				if !strings.HasPrefix(s, "terminal.session.") {
+				if !strings.HasPrefix(s, "event.terminal.session.") {
 					gridSubs = append(gridSubs, s)
 				}
 			}
@@ -174,7 +174,7 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 					// Render grid update using actual KV subs (filter out terminal)
 					gridSubs := []string{}
 					for _, s := range newInfo.Subscriptions {
-						if !strings.HasPrefix(s, "terminal.session.") {
+						if !strings.HasPrefix(s, "event.terminal.session.") {
 							gridSubs = append(gridSubs, s)
 						}
 					}
