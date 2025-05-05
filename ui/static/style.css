@@ -60,7 +60,7 @@ aside, main { padding: var(--size-3); box-sizing: border-box; }
 /* SubscriptionsGrid styles */
 .subscriptions-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(var(--size-content-2, 80px), 1fr));
+    grid-template-columns: repeat(2, 1fr); /* maximum 2 columns */
     gap: var(--size-3);
     width: 100%;
 }
@@ -203,4 +203,16 @@ aside, main { padding: var(--size-3); box-sizing: border-box; }
 }
 .prompt {
     flex: 0 0 auto;
+}
+
+.script-name {
+    color: var(--blue-6);
+    margin-right: var(--size-1);
+}
+.job-id {
+    color: var(--orange-6);
+    margin-right: var(--size-1);
+}
+.script-data.stderr {
+    color: var(--red-6);
 }

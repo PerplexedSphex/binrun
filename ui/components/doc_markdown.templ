@@ -1,0 +1,19 @@
+package components
+
+import (
+	"os"
+
+	"binrun/util"
+)
+
+// DocMarkdown embeds a file's rendered HTML. Usage:
+//   @docs.DocMarkdown("README.md")
+//   @docs.DocMarkdown("internal/handler.go", "go")
+templ DocMarkdown(path string, lang ...string) {
+	@util.FileToHTML(path, func() string {
+		if len(lang) > 0 {
+			return lang[0]
+		}
+		return ""
+	}(), os.DirFS("."))
+}

@@ -12,7 +12,7 @@ import (
 
 	"slices"
 
-	"binrun/internal/runtime"
+	runtime "binrun/internal/runtime"
 
 	"github.com/nats-io/nats.go/jetstream"
 	datastar "github.com/starfederation/datastar/sdk/go"
@@ -91,7 +91,7 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 		consumerCancel := func() {}
 		consumerDone := make(chan struct{})
 
-		createConsumer := func(subs []string) (context.CancelFunc, chan struct{}) {
+		createConsumer := func(subs []string, renderers []runtime.Renderer) (context.CancelFunc, chan struct{}) {
 			cctx, ccancel := context.WithCancel(ctx)
 			cdone := make(chan struct{})
 
@@ -110,8 +110,7 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 			go func() {
 				defer close(cdone)
 				_, err := cons.Consume(func(msg jetstream.Msg) {
-					// New unified dispatch via Renderers registry
-					for _, r := range runtime.Renderers {
+					for _, r := range renderers {
 						if r.MatchFunc(msg.Subject()) {
 							if err := r.RenderFunc(ctx, msg, sse); err != nil {
 								slog.Warn("render", "subj", msg.Subject(), "err", err)
@@ -130,7 +129,8 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 
 		// --- Start initial consumer ---
 		currentSubs := info.Subscriptions // Already includes terminal and is sorted
-		consumerCancel, consumerDone = createConsumer(currentSubs)
+		sessionRenderers := runtime.ForSubjects(currentSubs)
+		consumerCancel, consumerDone = createConsumer(currentSubs, sessionRenderers)
 
 		// --- Watch for live updates ---
 		watcher, err := kv.Watch(ctx, sid)
@@ -181,10 +181,11 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 					grid := components.SubscriptionsGrid(gridSubs)
 					_ = sse.MergeFragmentTempl(grid)
 
-					// Recreate consumer with new (sorted, terminal-inclusive) list
+					// Recreate renderer set and consumer
+					sessionRenderers = runtime.ForSubjects(newSubs)
 					consumerCancel()
 					<-consumerDone
-					consumerCancel, consumerDone = createConsumer(newSubs)
+					consumerCancel, consumerDone = createConsumer(newSubs, sessionRenderers)
 					currentSubs = newSubs
 				}
 			}

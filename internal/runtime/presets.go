@@ -2,23 +2,64 @@ package runtime
 
 import "fmt"
 
+// Preset keys (visible to users / API)
 const (
-	PresetKeyOrders  = "orders"
-	PresetKeyChat    = "chat"
-	SubjectOrders    = "event.orders.*"
-	SubjectChat      = "event.chat.*"
-	PresetKeyScripts = "scripts"
+	PresetKeyOrderSubs  = "ordersubs"
+	PresetKeyChatSubs   = "chatsubs"
+	PresetKeyScriptSubs = "scriptsubs"
 )
 
-// Static presets (non-parameterised)
-var Presets = map[string][]string{
-	PresetKeyOrders: {SubjectOrders, "event.invoice.created"},
-	PresetKeyChat:   {SubjectChat, "event.script.>"},
+// Subject constants that are reused across presets
+const (
+	SubjectOrders = "event.orders.*"
+	SubjectChat   = "event.chat.*"
+)
+
+// Preset describes a group of subject filters, optionally parameterised.
+// Params lists accepted flag names (e.g. "script", "job").
+// Build returns the subject list for a given arg map.
+// Missing params should be treated as wildcard "*" by Build.
+// Only Build OR Static may be set – Build(nil) should behave like Static.
+
+type Preset struct {
+	Help   string
+	Params []string
+	Build  func(args map[string]string) []string
 }
 
-// BuildScriptPreset returns subject filters for the script preset.
-// Empty parameters are treated as wildcards ("*").
-func BuildScriptPreset(scriptName, jobID string) []string {
+// allPresets is the registry keyed by preset ID.
+var Presets = map[string]Preset{}
+
+func init() {
+	// orders → static subjects
+	Presets[PresetKeyOrderSubs] = Preset{
+		Help:   "Order and invoice events",
+		Params: nil,
+		Build: func(_ map[string]string) []string {
+			return []string{SubjectOrders, "event.invoice.created"}
+		},
+	}
+
+	// chat → static subjects
+	Presets[PresetKeyChatSubs] = Preset{
+		Help: "Chat events",
+		Build: func(_ map[string]string) []string {
+			return []string{SubjectChat, "event.script.>"}
+		},
+	}
+
+	// scriptsubs → parameterised by script / job
+	Presets[PresetKeyScriptSubs] = Preset{
+		Help:   "Script lifecycle events",
+		Params: []string{"script", "job"},
+		Build:  buildScriptPreset,
+	}
+}
+
+// buildScriptPreset implements Build for the scripts preset.
+func buildScriptPreset(args map[string]string) []string {
+	scriptName := args["script"]
+	jobID := args["job"]
 	if scriptName == "" {
 		scriptName = "*"
 	}

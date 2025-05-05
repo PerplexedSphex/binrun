@@ -12,13 +12,18 @@ require (
 	github.com/nats-io/nats-server/v2 v2.11.1
 	github.com/nats-io/nats.go v1.41.2
 	github.com/prometheus/client_golang v1.18.0
+	github.com/rs/xid v1.6.0
 	github.com/starfederation/datastar v0.21.4
+	github.com/yuin/goldmark v1.7.11
+	github.com/yuin/goldmark-highlighting v0.0.0-20220208100518-594be1970594
 )
 
 require (
+	github.com/alecthomas/chroma v0.10.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/delaneyj/gostar v0.8.0 // indirect
+	github.com/dlclark/regexp2 v1.11.4 // indirect
 	github.com/goccy/go-json v0.10.4 // indirect
 	github.com/google/go-tpm v0.9.3 // indirect
 	github.com/gorilla/securecookie v1.1.2 // indirect

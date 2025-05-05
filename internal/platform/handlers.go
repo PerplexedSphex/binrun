@@ -46,20 +46,22 @@ func SendCommand(nc *nats.Conn) http.HandlerFunc {
 func LoadPresetHandler(js jetstream.JetStream) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		presetID := chi.URLParam(r, "preset")
-		var subs []string
-		switch presetID {
-		case runtime.PresetKeyScripts:
-			scriptName := r.URL.Query().Get("script")
-			jobID := r.URL.Query().Get("job")
-			subs = runtime.BuildScriptPreset(scriptName, jobID)
-		default:
-			var ok bool
-			subs, ok = runtime.Presets[presetID]
-			if !ok {
-				http.Error(w, "unknown preset", 404)
-				return
+
+		preset, ok := runtime.Presets[presetID]
+		if !ok {
+			http.Error(w, "unknown preset", http.StatusNotFound)
+			return
+		}
+
+		// Build argument map from query parameters (script, job, etc.)
+		args := map[string]string{}
+		for key, vals := range r.URL.Query() {
+			if len(vals) > 0 {
+				args[key] = vals[0]
 			}
 		}
+
+		subs := preset.Build(args)
 		// Ensure terminal subscription is included
 		sid := SessionID(r)
 		termSubj := fmt.Sprintf("event.terminal.session.%s.freeze", sid)

@@ -6,17 +6,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 
-	"log/slog"
-
-	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/rs/xid"
 )
 
 // ScriptRunner manages script creation and execution via NATS commands.
@@ -211,7 +210,7 @@ func (sr *ScriptRunner) handleRun(ctx context.Context, msg jetstream.Msg) {
 		return
 	}
 
-	jobID := uuid.NewString()
+	jobID := xid.New().String()
 	jobCtx, cancel := context.WithCancel(ctx)
 	sr.jobs.Store(jobID, jobState{cancel: cancel})
 

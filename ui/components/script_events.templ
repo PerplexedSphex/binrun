@@ -1,0 +1,29 @@
+package components
+
+// Status span
+templ ScriptStatus(text string) {
+    <span class="script-status">{text}</span>
+}
+
+// Simple line output (legacy)
+templ ScriptOutput(line string) {
+    <pre class="script-output">{line}</pre>
+}
+
+// Full line with script name & job id
+// isErr controls red coloring via CSS class
+templ ScriptOutputLine(script string, jobID string, line string, isErr bool) {
+    <pre class="script-output">
+        if script != "" {
+            <span class="script-name">{script}</span>
+        }
+        if jobID != "" {
+            <span class="job-id">{jobID}</span>
+        }
+        if isErr {
+            <span class="script-data stderr">{line}</span>
+        } else {
+            <span class="script-data">{line}</span>
+        }
+    </pre>
+} 

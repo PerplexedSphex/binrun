@@ -70,7 +70,7 @@ func TerminalPrompt() templ.Component {
 			templ_7745c5c3_Var2 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "<div class=\"term-line\" id=\"live-prompt\" data-scroll-into-view><span class=\"prompt\">&gt; </span><form class=\"term-form\" data-on-submit=\"@post(&#39;/terminal&#39;, {contentType: &#39;form&#39;}); this.reset();\"><input type=\"text\" name=\"cmd\" data-focus autocomplete=\"off\" spellcheck=\"false\"> <button type=\"submit\" style=\"display: none;\"></button></form></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "<div class=\"term-line\" id=\"live-prompt\" data-scroll-into-view><span class=\"prompt\">&gt; </span><form class=\"term-form\" data-on-submit=\"@post(&#39;/terminal&#39;, {contentType: &#39;form&#39;})\"><input type=\"text\" name=\"cmd\" data-focus autocomplete=\"off\" spellcheck=\"false\"> <button type=\"submit\" style=\"display: none;\"></button></form></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

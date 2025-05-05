@@ -14,7 +14,7 @@ templ TerminalPrompt() {
     <div class="term-line" id="live-prompt" data-scroll-into-view>
         <span class="prompt">&gt; </span>
         <form class="term-form"
-              data-on-submit="@post('/terminal', {contentType: 'form'}); this.reset();">
+              data-on-submit="@post('/terminal', {contentType: 'form'})">
             <input type="text" name="cmd" data-focus
                    autocomplete="off" spellcheck="false" />
             <button type="submit" style="display: none;"></button>
