@@ -11,7 +11,7 @@ import (
 
 	"github.com/a-h/templ"
 	"github.com/yuin/goldmark"
-	hl "github.com/yuin/goldmark-highlighting"
+	hl "github.com/yuin/goldmark-highlighting/v2"
 	"github.com/yuin/goldmark/extension"
 )
 
@@ -53,7 +53,7 @@ func FileToHTML(path string, lang string, fsys fs.FS) templ.Component {
 	goldmark.New(
 		goldmark.WithExtensions(
 			extension.GFM,
-			hl.NewHighlighting(hl.WithStyle("github")), // inline colours
+			hl.NewHighlighting(hl.WithStyle("github-dark")), // inline colours
 		),
 	).Convert(src, &buf)
 

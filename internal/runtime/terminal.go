@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"slices"
@@ -74,9 +76,12 @@ func (te *TerminalEngine) helpText(cmd string) string {
 	case "", "general":
 		return `commands:
   help, -h               Show this help
+  ls scripts             List available scripts
   ls presets             List available presets
   ls preset <id>         Show subjects built by a preset
   load <presetID> [flags]   Load a preset for this session; flags depend on the preset
+  view readme            Show README in the left panel
+  view <script>          Show script source in the left panel
   echo <text>            Echo text back
   script create <name> <lang>  Create a script
   script run <name> [args...]  Run a script`
@@ -134,8 +139,99 @@ func (te *TerminalEngine) handleCommand(ctx context.Context, msg jetstream.Msg) 
 
 	// Simple regex dispatch (non-preset, non-help)
 	outText := "ok"
+	var docPath string       // Declare docPath here for broader scope
+	var pathsToView []string // Declare here for access later
 
 	switch {
+	case strings.HasPrefix(in.Cmd, "view "):
+		parts := strings.Split(in.Cmd, " ")
+		if len(parts) < 2 {
+			outText = "usage: view <doc|scriptname>"
+			break
+		}
+		doc := strings.ToLower(parts[1])
+		switch doc {
+		case "readme", "readme.md":
+			docPath = "README.md"
+		default: // Assume it's a script name
+			scriptName := parts[1] // Use original case
+			scriptDir := filepath.Join("scripts", scriptName)
+			info, err := os.Stat(scriptDir)
+			if err != nil || !info.IsDir() {
+				outText = fmt.Sprintf("script '%s' not found or not a directory", scriptName)
+				break
+			}
+
+			// Find main script file
+			mainFile := findMainScriptFile(scriptDir)
+			if mainFile == "" {
+				outText = fmt.Sprintf("main script file (main.py/go, index.js) not found in '%s'", scriptName)
+				break
+			}
+
+			// Collect paths to view: README first, then main file.
+			readmePath := filepath.Join(scriptDir, "README.md")
+			if _, err := os.Stat(readmePath); err == nil {
+				pathsToView = append(pathsToView, readmePath)
+			}
+			pathsToView = append(pathsToView, filepath.Join(scriptDir, mainFile))
+			docPath = "script-view" // Use a placeholder to signal success
+		}
+
+		// Check if we found either a direct doc (README.md) or script files
+		if docPath == "README.md" || docPath == "script-view" {
+			// Publish viewdoc event so UI can render the markdown
+			evtSubj := fmt.Sprintf("event.terminal.session.%s.viewdoc", sid)
+
+			// Determine payload based on single doc or script view
+			var pathsPayload []string
+			if docPath == "README.md" {
+				pathsPayload = []string{"README.md"}
+			} else { // script-view
+				// pathsToView was populated in the default switch case above
+				pathsPayload = pathsToView // Use the collected paths
+			}
+
+			// Only send the 'paths' field, as expected by ViewDocEvent
+			payload := map[string]any{"paths": pathsPayload}
+
+			data, _ := json.Marshal(payload)
+			if _, err := te.js.Publish(ctx, evtSubj, data); err != nil {
+				slog.Warn("terminal: publish viewdoc", "err", err)
+			}
+
+			// Ensure the session is subscribed to this subject
+			kv, err := te.js.KeyValue(ctx, "sessions")
+			if err == nil {
+				entry, _ := kv.Get(ctx, sid)
+				var info struct {
+					Subscriptions []string `json:"subscriptions"`
+				}
+				if entry != nil {
+					_ = json.Unmarshal(entry.Value(), &info)
+				}
+				added := false
+				if !slices.Contains(info.Subscriptions, evtSubj) {
+					info.Subscriptions = append(info.Subscriptions, evtSubj)
+					slices.Sort(info.Subscriptions)
+					added = true
+				}
+				if added {
+					if data, err := json.Marshal(info); err == nil {
+						if _, err := kv.Put(ctx, sid, data); err != nil {
+							slog.Warn("terminal: kv put viewdoc", "err", err)
+						}
+					}
+				}
+			}
+
+			if docPath == "README.md" {
+				outText = "opening README.md"
+			} else {
+				outText = fmt.Sprintf("opening script %s (%d files)", parts[1], len(pathsPayload))
+			}
+		}
+
 	case strings.HasPrefix(in.Cmd, "echo "):
 		outText = strings.TrimSpace(strings.TrimPrefix(in.Cmd, "echo "))
 
@@ -173,6 +269,11 @@ func (te *TerminalEngine) handleCommand(ctx context.Context, msg jetstream.Msg) 
 
 	default:
 		outText = "error: unknown command"
+	}
+
+	// If docPath is still "", it means the switch default block failed to find a script
+	if docPath == "" && outText == "ok" { // Check if docPath was set at all
+		outText = "error: view target not found"
 	}
 
 	te.sendFreeze(ctx, sid, in.Cmd, outText, msg)
@@ -229,6 +330,26 @@ func (te *TerminalEngine) handlePresetCommand(ctx context.Context, sid string, c
 			}
 			slices.Sort(keys)
 			return "available presets: " + strings.Join(keys, ", "), true
+		}
+		if len(parts) >= 2 && parts[1] == "scripts" {
+			dirs, err := os.ReadDir("./scripts")
+			if err != nil {
+				return "error reading scripts directory", true
+			}
+			var scriptList []string
+			for _, entry := range dirs {
+				if entry.IsDir() {
+					scriptName := entry.Name()
+					lang := guessScriptLang("./scripts/" + scriptName)
+					if lang != "" {
+						scriptList = append(scriptList, fmt.Sprintf("%s (%s)", scriptName, lang))
+					} else {
+						scriptList = append(scriptList, scriptName)
+					}
+				}
+			}
+			slices.Sort(scriptList)
+			return "available scripts:\n  " + strings.Join(scriptList, "\n  "), true
 		}
 		if len(parts) >= 3 && parts[1] == "preset" {
 			key := parts[2]
@@ -288,4 +409,33 @@ func (te *TerminalEngine) sendFreeze(ctx context.Context, sid, originalCmd, outp
 		return
 	}
 	_ = msg.Ack()
+}
+
+// --- Helpers for ls scripts / view <script> ---
+
+func guessScriptLang(scriptDir string) string {
+	if _, err := os.Stat(filepath.Join(scriptDir, "main.py")); err == nil {
+		return "python"
+	}
+	if _, err := os.Stat(filepath.Join(scriptDir, "main.go")); err == nil {
+		return "go"
+	}
+	if _, err := os.Stat(filepath.Join(scriptDir, "index.ts")); err == nil {
+		return "typescript"
+	}
+	if _, err := os.Stat(filepath.Join(scriptDir, "index.js")); err == nil {
+		return "javascript"
+	}
+	// Add more languages as needed
+	return ""
+}
+
+func findMainScriptFile(scriptDir string) string {
+	commonFiles := []string{"main.py", "main.go", "index.ts"}
+	for _, f := range commonFiles {
+		if _, err := os.Stat(filepath.Join(scriptDir, f)); err == nil {
+			return f
+		}
+	}
+	return ""
 }

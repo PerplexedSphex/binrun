@@ -13,11 +13,11 @@ import (
 	templruntime "github.com/a-h/templ/runtime"
 )
 
-// DocMarkdown embeds a file's rendered HTML. Usage:
+// DocMarkdown embeds rendered HTML for multiple files, wrapped in the target div.
+// Usage:
 //
-//	@docs.DocMarkdown("README.md")
-//	@docs.DocMarkdown("internal/handler.go", "go")
-func DocMarkdown(path string, lang ...string) templ.Component {
+//	@docs.DocMarkdown([]string{"README.md", "scripts/foo/main.go"})
+func DocMarkdown(paths []string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -38,12 +38,31 @@ func DocMarkdown(path string, lang ...string) templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = util.FileToHTML(path, func() string {
-			if len(lang) > 0 {
-				return lang[0]
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div id=\"left-panel-content\">")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		for i, path := range paths {
+			if i > 0 {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<hr style=\"border-top: 2px solid var(--surface-4); margin: var(--size-4) 0;\">")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
 			}
-			return ""
-		}(), os.DirFS(".")).Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, " <div>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = util.FileToHTML(path, "", os.DirFS(".")).Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</div>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
