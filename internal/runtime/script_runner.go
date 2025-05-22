@@ -339,10 +339,18 @@ func (pythonImpl) Init(ctx context.Context, dir string) error {
 }
 
 func (pythonImpl) Run(ctx context.Context, dir string, args []string, env map[string]string) *exec.Cmd {
-	allArgs := append([]string{"run", "main.py"}, args...)
-	cmd := exec.CommandContext(ctx, "uv", allArgs...)
+	// Join args for command string
+	argStr := strings.Join(args, " ")
+
+	// Create venv (idempotent), install deps, then run
+	cmdStr := fmt.Sprintf("uv venv && uv pip install . && uv run main.py %s", argStr)
+
+	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
 	cmd.Dir = dir
+
+	// Merge existing environment with any custom env vars provided in the run payload.
 	cmd.Env = append(os.Environ(), mapToEnv(env)...)
+
 	return cmd
 }
 
@@ -356,8 +364,8 @@ func (tsImpl) Init(ctx context.Context, dir string) error {
 }
 
 func (tsImpl) Run(ctx context.Context, dir string, args []string, env map[string]string) *exec.Cmd {
-	allArgs := append([]string{"run", "index.ts"}, args...)
-	cmd := exec.CommandContext(ctx, "bun", allArgs...)
+	// Chain 'bun install' and 'bun run index.ts ...' in a shell
+	cmd := exec.CommandContext(ctx, "sh", "-c", "bun install && bun run index.ts "+strings.Join(args, " "))
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), mapToEnv(env)...)
 	return cmd

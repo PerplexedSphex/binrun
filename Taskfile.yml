@@ -19,13 +19,15 @@ env:
 tasks:
   # --- Dev tool bootstrap ----------------------------------------------------
   tools:
-    desc: "Install Task, templ & goimports + NATS tooling"
+    desc: "Install Task, templ, goimports, NATS tooling, and Playwright browsers"
     cmds:
       - go install github.com/go-task/task/v3/cmd/task@latest
       - go install github.com/a-h/templ/cmd/templ@latest
       - go install golang.org/x/tools/cmd/goimports@latest
       - go install github.com/nats-io/natscli/nats@latest
       - go install github.com/nats-io/nats-server/v2@latest
+      - echo "Attempting to install Playwright Chromium browser..."
+      - NODE_OPTIONS="" playwright install chromium --with-deps --no-shell
 
   # --- Formatting & tidying --------------------------------------------------
   fmt:
