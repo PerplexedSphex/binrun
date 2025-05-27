@@ -1,6 +1,8 @@
 package runtime
 
-import "fmt"
+import (
+	"binrun/internal/messages"
+)
 
 // Preset keys (visible to users / API)
 const (
@@ -66,6 +68,12 @@ func buildScriptPreset(args map[string]string) []string {
 	if jobID == "" {
 		jobID = "*"
 	}
-	base := fmt.Sprintf("event.script.%s.job.%s.", scriptName, jobID)
-	return []string{base + "started", base + "exit", base + "stdout", base + "stderr"}
+
+	// Use the message package helper functions to build subjects
+	return []string{
+		messages.ScriptJobStartedSubject(scriptName, jobID),
+		messages.ScriptJobExitSubject(scriptName, jobID),
+		messages.ScriptJobStdoutSubject(scriptName, jobID),
+		messages.ScriptJobStderrSubject(scriptName, jobID),
+	}
 }

@@ -121,6 +121,102 @@ Every run is isolated—streams and buckets live only in memory and are discarde
 
 ---
 
+## Messaging API
+
+The application uses a centralized messaging schema defined in `internal/messages/` that provides type-safe message construction and validation for all NATS messaging.
+
+### Message Types
+
+All messages implement one of two interfaces:
+- **Commands**: Input messages that request something to happen (e.g., `ScriptCreateCommand`)
+- **Events**: Output messages that indicate something has happened (e.g., `ScriptCreatedEvent`)
+
+### Available Messages
+
+#### Script Domain
+
+**Commands:**
+- `ScriptCreateCommand` - Create a new script project
+- `ScriptRunCommand` - Execute an existing script
+
+**Events:**
+- `ScriptCreatedEvent` - Script successfully created
+- `ScriptCreateErrorEvent` - Script creation failed
+- `ScriptJobStartedEvent` - Script job started execution
+- `ScriptJobOutputEvent` - Script job produced stdout/stderr
+- `ScriptJobExitEvent` - Script job completed
+- `ScriptJobErrorEvent` - Script job failed to start
+
+#### Terminal Domain
+
+**Commands:**
+- `TerminalCommandMessage` - Command entered in terminal
+
+**Events:**
+- `TerminalFreezeEvent` - Terminal output to display
+- `TerminalViewDocEvent` - Document viewing triggered
+
+### Usage Examples
+
+```go
+import "binrun/internal/messages"
+
+// Create and publish a command
+cmd := messages.NewScriptCreateCommand("my-script", "python").
+    WithCorrelation("req-123")
+
+publisher := messages.NewPublisher(js)
+if err := publisher.PublishCommand(ctx, cmd); err != nil {
+    log.Fatal(err)
+}
+
+// Create and publish an event
+evt := messages.NewScriptCreatedEvent("my-script", "python").
+    WithCorrelation("req-123")
+
+if err := publisher.PublishEvent(ctx, evt); err != nil {
+    log.Fatal(err)
+}
+```
+
+### Subject Patterns
+
+All NATS subject patterns are defined as constants in the schema:
+
+```go
+// Commands
+messages.ScriptCreateSubject        // "command.script.create"
+messages.ScriptRunSubjectPattern    // "command.script.*.run"
+
+// Events
+messages.ScriptCreatedSubjectPattern     // "event.script.*.created"
+messages.ScriptJobStartedSubjectPattern  // "event.script.*.job.*.started"
+messages.TerminalFreezeSubjectPattern    // "event.terminal.session.*.freeze"
+```
+
+Helper functions generate concrete subjects:
+
+```go
+messages.ScriptRunSubject("foo")           // "command.script.foo.run"
+messages.ScriptJobExitSubject("foo", "42") // "event.script.foo.job.42.exit"
+messages.TerminalFreezeSubject("abc123")   // "event.terminal.session.abc123.freeze"
+```
+
+### Validation
+
+All commands and events include validation to ensure data integrity:
+
+```go
+cmd := messages.NewScriptCreateCommand("", "python") // Invalid: empty name
+if err := cmd.Validate(); err != nil {
+    // Error: script_name is required
+}
+```
+
+The `Publisher` automatically validates messages before publishing, returning clear error messages for invalid data.
+
+---
+
 # Appendix: JetStream 80/20 CLI & Go API Reference
 
 ## NATS CLI – Streams, Consumers, KV, Object Store

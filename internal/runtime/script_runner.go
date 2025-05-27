@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 
+	"binrun/internal/messages"
+
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/rs/xid"
@@ -22,6 +24,7 @@ import (
 type ScriptRunner struct {
 	nc         *nats.Conn
 	js         jetstream.JetStream
+	publisher  *messages.Publisher
 	scriptsDir string
 	langs      map[string]LangImpl
 	jobs       sync.Map // jobID -> cancelFunc
@@ -47,6 +50,7 @@ func NewScriptRunner(nc *nats.Conn, js jetstream.JetStream, scriptsDir string) *
 	return &ScriptRunner{
 		nc:         nc,
 		js:         js,
+		publisher:  messages.NewPublisher(js),
 		scriptsDir: scriptsDir,
 		langs:      langs,
 	}
@@ -55,11 +59,11 @@ func NewScriptRunner(nc *nats.Conn, js jetstream.JetStream, scriptsDir string) *
 // Start subscribes to script create/run commands and manages job lifecycle.
 func (sr *ScriptRunner) Start(ctx context.Context) error {
 	// Create consumers for script.create and script.*.run
-	if err := sr.setupConsumer(ctx, "SCRIPT_CREATE", "command.script.create", sr.handleCreate); err != nil {
+	if err := sr.setupConsumer(ctx, "SCRIPT_CREATE", messages.ScriptCreateSubject, sr.handleCreate); err != nil {
 		return err
 	}
 
-	if err := sr.setupConsumer(ctx, "SCRIPT_RUN", "command.script.*.run", sr.handleRun); err != nil {
+	if err := sr.setupConsumer(ctx, "SCRIPT_RUN", messages.ScriptRunSubjectPattern, sr.handleRun); err != nil {
 		return err
 	}
 
@@ -100,15 +104,9 @@ func (sr *ScriptRunner) setupConsumer(ctx context.Context, name string, subject 
 
 // handleCreate processes command.script.create messages.
 func (sr *ScriptRunner) handleCreate(ctx context.Context, msg jetstream.Msg) {
-	type createPayload struct {
-		ScriptName    string `json:"script_name"`
-		ScriptType    string `json:"script_type"`
-		CorrelationID string `json:"correlation_id,omitempty"`
-	}
-
 	slog.Info("Received script create command", "payload", string(msg.Data()))
 
-	var in createPayload
+	var in messages.ScriptCreateCommand
 	if err := json.Unmarshal(msg.Data(), &in); err != nil {
 		slog.Error("Invalid create payload", "err", err)
 		_ = msg.Ack()
@@ -120,11 +118,11 @@ func (sr *ScriptRunner) handleCreate(ctx context.Context, msg jetstream.Msg) {
 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		slog.Error("Failed to create script directory", "dir", dir, "err", err)
-		sr.publishEvent(
-			fmt.Sprintf("event.script.%s.create.error", in.ScriptName),
-			map[string]any{"error": err.Error(), "correlation_id": in.CorrelationID},
-			in.CorrelationID,
-		)
+		evt := messages.NewScriptCreateErrorEvent(in.ScriptName, err.Error()).
+			WithCorrelation(in.CorrelationID)
+		if pubErr := sr.publisher.PublishEvent(ctx, evt); pubErr != nil {
+			slog.Error("Failed to publish create error event", "err", pubErr)
+		}
 		_ = msg.Ack()
 		return
 	}
@@ -132,43 +130,37 @@ func (sr *ScriptRunner) handleCreate(ctx context.Context, msg jetstream.Msg) {
 	impl := sr.langs[in.ScriptType]
 	if impl == nil {
 		slog.Error("Unsupported script type", "script_type", in.ScriptType)
-		sr.publishEvent(
-			fmt.Sprintf("event.script.%s.create.error", in.ScriptName),
-			map[string]any{"error": "unsupported script_type", "correlation_id": in.CorrelationID},
-			in.CorrelationID,
-		)
+		evt := messages.NewScriptCreateErrorEvent(in.ScriptName, "unsupported script_type").
+			WithCorrelation(in.CorrelationID)
+		if pubErr := sr.publisher.PublishEvent(ctx, evt); pubErr != nil {
+			slog.Error("Failed to publish create error event", "err", pubErr)
+		}
 		_ = msg.Ack()
 		return
 	}
 
 	if err := impl.Init(ctx, dir); err != nil {
 		slog.Error("Script initialization failed", "name", in.ScriptName, "err", err)
-		sr.publishEvent(
-			fmt.Sprintf("event.script.%s.create.error", in.ScriptName),
-			map[string]any{"error": err.Error(), "correlation_id": in.CorrelationID},
-			in.CorrelationID,
-		)
+		evt := messages.NewScriptCreateErrorEvent(in.ScriptName, err.Error()).
+			WithCorrelation(in.CorrelationID)
+		if pubErr := sr.publisher.PublishEvent(ctx, evt); pubErr != nil {
+			slog.Error("Failed to publish create error event", "err", pubErr)
+		}
 		_ = msg.Ack()
 		return
 	}
 
 	slog.Info("Script created successfully", "name", in.ScriptName, "type", in.ScriptType)
-	sr.publishEvent(
-		fmt.Sprintf("event.script.%s.created", in.ScriptName),
-		map[string]any{"correlation_id": in.CorrelationID},
-		in.CorrelationID,
-	)
+	evt := messages.NewScriptCreatedEvent(in.ScriptName, in.ScriptType).
+		WithCorrelation(in.CorrelationID)
+	if err := sr.publisher.PublishEvent(ctx, evt); err != nil {
+		slog.Error("Failed to publish created event", "err", err)
+	}
 	_ = msg.Ack()
 }
 
 // handleRun processes command.script.<name>.run messages.
 func (sr *ScriptRunner) handleRun(ctx context.Context, msg jetstream.Msg) {
-	type runPayload struct {
-		Args          []string          `json:"args,omitempty"`
-		Env           map[string]string `json:"env,omitempty"`
-		CorrelationID string            `json:"correlation_id,omitempty"`
-	}
-
 	// Extract script name from subject
 	parts := strings.Split(msg.Subject(), ".")
 	if len(parts) < 4 {
@@ -178,21 +170,23 @@ func (sr *ScriptRunner) handleRun(ctx context.Context, msg jetstream.Msg) {
 	}
 
 	scriptName := parts[2]
-	var in runPayload
+	var in messages.ScriptRunCommand
 	if err := json.Unmarshal(msg.Data(), &in); err != nil {
 		slog.Error("Invalid run payload", "err", err)
 		_ = msg.Ack()
 		return
 	}
+	// Set the script name from the subject
+	in.ScriptName = scriptName
 
 	dir := filepath.Join(sr.scriptsDir, scriptName)
 	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() {
-		sr.publishEvent(
-			fmt.Sprintf("event.script.%s.job.error", scriptName),
-			map[string]any{"error": "script not found", "correlation_id": in.CorrelationID},
-			in.CorrelationID,
-		)
+		evt := messages.NewScriptJobErrorEvent(scriptName, "script not found").
+			WithCorrelation(in.CorrelationID)
+		if pubErr := sr.publisher.PublishEvent(ctx, evt); pubErr != nil {
+			slog.Error("Failed to publish job error event", "err", pubErr)
+		}
 		_ = msg.Ack()
 		return
 	}
@@ -201,11 +195,11 @@ func (sr *ScriptRunner) handleRun(ctx context.Context, msg jetstream.Msg) {
 	scriptType := sr.detectScriptType(dir)
 	impl := sr.langs[scriptType]
 	if impl == nil {
-		sr.publishEvent(
-			fmt.Sprintf("event.script.%s.job.error", scriptName),
-			map[string]any{"error": "unknown script type", "correlation_id": in.CorrelationID},
-			in.CorrelationID,
-		)
+		evt := messages.NewScriptJobErrorEvent(scriptName, "unknown script type").
+			WithCorrelation(in.CorrelationID)
+		if pubErr := sr.publisher.PublishEvent(ctx, evt); pubErr != nil {
+			slog.Error("Failed to publish job error event", "err", pubErr)
+		}
 		_ = msg.Ack()
 		return
 	}
@@ -219,11 +213,12 @@ func (sr *ScriptRunner) handleRun(ctx context.Context, msg jetstream.Msg) {
 	stderr, _ := cmd.StderrPipe()
 
 	if err := cmd.Start(); err != nil {
-		sr.publishEvent(
-			fmt.Sprintf("event.script.%s.job.%s.exit", scriptName, jobID),
-			map[string]any{"exit_code": -1, "error": err.Error(), "correlation_id": in.CorrelationID},
-			in.CorrelationID,
-		)
+		evt := messages.NewScriptJobExitEvent(scriptName, jobID, -1).
+			WithError(err.Error()).
+			WithCorrelation(in.CorrelationID)
+		if pubErr := sr.publisher.PublishEvent(ctx, evt); pubErr != nil {
+			slog.Error("Failed to publish exit event", "err", pubErr)
+		}
 		cancel()
 		sr.jobs.Delete(jobID)
 		_ = msg.Ack()
@@ -231,18 +226,18 @@ func (sr *ScriptRunner) handleRun(ctx context.Context, msg jetstream.Msg) {
 	}
 
 	// Publish started event
-	sr.publishEvent(
-		fmt.Sprintf("event.script.%s.job.%s.started", scriptName, jobID),
-		map[string]any{"pid": cmd.Process.Pid, "correlation_id": in.CorrelationID},
-		in.CorrelationID,
-	)
+	evt := messages.NewScriptJobStartedEvent(scriptName, jobID, cmd.Process.Pid).
+		WithCorrelation(in.CorrelationID)
+	if err := sr.publisher.PublishEvent(ctx, evt); err != nil {
+		slog.Error("Failed to publish started event", "err", err)
+	}
 
 	// Pump stdout/stderr
 	go sr.pumpOutput(jobCtx, stdout, scriptName, jobID, "stdout", in.CorrelationID)
 	go sr.pumpOutput(jobCtx, stderr, scriptName, jobID, "stderr", in.CorrelationID)
 
 	// Wait for exit
-	go sr.waitForExit(cmd, scriptName, jobID, cancel, in.CorrelationID)
+	go sr.waitForExit(ctx, cmd, scriptName, jobID, cancel, in.CorrelationID)
 
 	_ = msg.Ack()
 }
@@ -258,25 +253,31 @@ func (sr *ScriptRunner) detectScriptType(dir string) string {
 }
 
 // waitForExit waits for the process to exit and publishes event
-func (sr *ScriptRunner) waitForExit(cmd *exec.Cmd, scriptName, jobID string, cancel context.CancelFunc, correlationID string) {
+func (sr *ScriptRunner) waitForExit(ctx context.Context, cmd *exec.Cmd, scriptName, jobID string, cancel context.CancelFunc, correlationID string) {
 	err := cmd.Wait()
 	exitCode := 0
+	var exitError string
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		} else {
 			exitCode = -1
+			exitError = err.Error()
 		}
 		slog.Error("Script process exited with error", "script", scriptName, "job_id", jobID, "code", exitCode, "err", err)
 	} else {
 		slog.Info("Script process completed successfully", "script", scriptName, "job_id", jobID)
 	}
 
-	sr.publishEvent(
-		fmt.Sprintf("event.script.%s.job.%s.exit", scriptName, jobID),
-		map[string]any{"exit_code": exitCode, "correlation_id": correlationID},
-		correlationID,
-	)
+	evt := messages.NewScriptJobExitEvent(scriptName, jobID, exitCode).
+		WithCorrelation(correlationID)
+	if exitError != "" {
+		evt = evt.WithError(exitError)
+	}
+
+	if err := sr.publisher.PublishEvent(ctx, evt); err != nil {
+		slog.Error("Failed to publish exit event", "err", err)
+	}
 
 	cancel()
 	sr.jobs.Delete(jobID)
@@ -290,11 +291,11 @@ func (sr *ScriptRunner) pumpOutput(ctx context.Context, r io.Reader, scriptName,
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		sr.publishEvent(
-			fmt.Sprintf("event.script.%s.job.%s.%s", scriptName, jobID, stream),
-			map[string]any{"data": line, "correlation_id": correlationID},
-			correlationID,
-		)
+		evt := messages.NewScriptJobOutputEvent(scriptName, jobID, stream, line).
+			WithCorrelation(correlationID)
+		if err := sr.publisher.PublishEvent(ctx, evt); err != nil {
+			slog.Error("Failed to publish output event", "err", err)
+		}
 
 		select {
 		case <-ctx.Done():

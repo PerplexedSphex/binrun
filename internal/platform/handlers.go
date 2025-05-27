@@ -2,11 +2,11 @@ package platform
 
 import (
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"slices"
 
+	"binrun/internal/messages"
 	"binrun/internal/runtime"
 
 	"github.com/go-chi/chi/v5"
@@ -64,7 +64,7 @@ func LoadPresetHandler(js jetstream.JetStream) http.HandlerFunc {
 		subs := preset.Build(args)
 		// Ensure terminal subscription is included
 		sid := SessionID(r)
-		termSubj := fmt.Sprintf("event.terminal.session.%s.freeze", sid)
+		termSubj := messages.TerminalFreezeSubject(sid)
 		if !slices.Contains(subs, termSubj) {
 			subs = append(subs, termSubj)
 		}
@@ -92,22 +92,31 @@ func LoadPresetHandler(js jetstream.JetStream) http.HandlerFunc {
 func TerminalCommandHandler(js jetstream.JetStream) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sid := SessionID(r)
-		var body map[string]any
+		publisher := messages.NewPublisher(js)
 
+		var cmdText string
 		// Attempt to parse as form (handles urlencoded and multipart).
 		if err := r.ParseMultipartForm(10 << 20); err == nil && (len(r.Form) > 0 || len(r.PostForm) > 0 || (r.MultipartForm != nil && len(r.MultipartForm.Value) > 0)) {
-			cmd := r.FormValue("cmd")
-			body = map[string]any{"cmd": cmd}
+			cmdText = r.FormValue("cmd")
 		} else {
 			// fallback to JSON body
+			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				http.Error(w, "bad body", 400)
 				return
 			}
+			if cmd, ok := body["cmd"].(string); ok {
+				cmdText = cmd
+			}
 		}
-		subj := fmt.Sprintf("terminal.session.%s.command", sid)
-		data, _ := json.Marshal(body)
-		if _, err := js.Publish(r.Context(), subj, data); err != nil {
+
+		if cmdText == "" {
+			http.Error(w, "missing cmd", 400)
+			return
+		}
+
+		cmd := messages.NewTerminalCommandMessage(sid, cmdText)
+		if err := publisher.PublishCommand(r.Context(), cmd); err != nil {
 			http.Error(w, err.Error(), 500)
 			return
 		}

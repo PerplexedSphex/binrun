@@ -3,11 +3,11 @@ package platform
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 
+	"binrun/internal/messages"
 	components "binrun/ui/components"
 
 	"slices"
@@ -33,7 +33,7 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 		if err != nil {
 			// Entry doesn't exist, create a default one with just terminal
 			slog.Info("UIStream: No session KV found, creating default", "sid", sid)
-			termSubj := fmt.Sprintf("event.terminal.session.%s.freeze", sid)
+			termSubj := messages.TerminalFreezeSubject(sid)
 			info := SessionInfo{Subscriptions: []string{termSubj}}
 			data, _ := json.Marshal(info)
 			if _, putErr := kv.Put(ctx, sid, data); putErr != nil {
@@ -57,7 +57,7 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 			return
 		}
 
-		termSubj := fmt.Sprintf("event.terminal.session.%s.freeze", sid)
+		termSubj := messages.TerminalFreezeSubject(sid)
 		if !slices.Contains(info.Subscriptions, termSubj) {
 			info.Subscriptions = append(info.Subscriptions, termSubj)
 			slices.Sort(info.Subscriptions)

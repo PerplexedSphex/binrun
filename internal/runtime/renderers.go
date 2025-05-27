@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"binrun/internal/messages"
 	components "binrun/ui/components"
 
 	"github.com/nats-io/nats.go/jetstream"
@@ -14,12 +15,7 @@ import (
 
 // ─────────────────── TERMINAL EVENTS ───────────────────
 
-type TerminalEvent struct {
-	Cmd    string `json:"cmd"`
-	Output string `json:"output"`
-}
-
-func renderTerminal(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator, evt TerminalEvent) error {
+func renderTerminal(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator, evt messages.TerminalFreezeEvent) error {
 	// 1. append frozen line
 	if err := sse.MergeFragmentTempl(
 		components.TerminalFrozenLine(evt.Cmd, evt.Output),
@@ -36,12 +32,7 @@ func renderTerminal(ctx context.Context, msg jetstream.Msg, sse *datastar.Server
 	)
 }
 
-// ViewDoc event triggers markdown file rendering in left panel
-type ViewDocEvent struct {
-	Paths []string `json:"paths"`
-}
-
-func renderViewDoc(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator, evt ViewDocEvent) error {
+func renderViewDoc(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator, evt messages.TerminalViewDocEvent) error {
 	slog.Info("renderViewDoc called", "subject", msg.Subject(), "receivedPaths", evt.Paths)
 	// Check if paths were provided
 	if len(evt.Paths) == 0 {
@@ -56,13 +47,6 @@ func renderViewDoc(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerS
 }
 
 // ─────────────────── SCRIPT EVENTS ─────────────────────
-
-// minimal helper components for now in ui/components
-
-// Created ok
-type ScriptCreated struct {
-	CorrelationID string `json:"correlation_id"`
-}
 
 // parseScriptSubject extracts script name and optional job ID from subjects of
 // the form:
@@ -83,60 +67,32 @@ func parseScriptSubject(subj string) (scriptName, jobID string) {
 	return
 }
 
-func renderScriptCreated(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator, selector string, _ ScriptCreated) error {
+func renderScriptCreated(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator, selector string, _ messages.ScriptCreatedEvent) error {
 	scriptName, _ := parseScriptSubject(msg.Subject())
 	frag := components.ScriptOutputLine(scriptName, "", "created", false)
 	return sse.MergeFragmentTempl(frag, datastar.WithSelector(selector), datastar.WithMergeAppend())
 }
 
-// create error
-
-type ScriptCreateErr struct {
-	Error         string `json:"error"`
-	CorrelationID string `json:"correlation_id"`
-}
-
-func renderScriptCreateErr(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator, selector string, e ScriptCreateErr) error {
+func renderScriptCreateErr(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator, selector string, e messages.ScriptCreateErrorEvent) error {
 	scriptName, _ := parseScriptSubject(msg.Subject())
 	frag := components.ScriptOutputLine(scriptName, "", "create error: "+e.Error, true)
 	return sse.MergeFragmentTempl(frag, datastar.WithSelector(selector), datastar.WithMergeAppend())
 }
 
-// job started
-
-type ScriptJobStarted struct {
-	PID           int    `json:"pid"`
-	CorrelationID string `json:"correlation_id"`
-}
-
-func renderJobStarted(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator, selector string, j ScriptJobStarted) error {
+func renderJobStarted(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator, selector string, j messages.ScriptJobStartedEvent) error {
 	scriptName, jobID := parseScriptSubject(msg.Subject())
 	frag := components.ScriptOutputLine(scriptName, jobID, fmt.Sprintf("job started pid=%d", j.PID), false)
 	return sse.MergeFragmentTempl(frag, datastar.WithSelector(selector), datastar.WithMergeAppend())
 }
 
-// job output / stderr
-
-type ScriptJobOutput struct {
-	Data          string `json:"data"`
-	CorrelationID string `json:"correlation_id"`
-}
-
-func renderJobOutput(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator, selector string, j ScriptJobOutput) error {
+func renderJobOutput(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator, selector string, j messages.ScriptJobOutputEvent) error {
 	scriptName, jobID := parseScriptSubject(msg.Subject())
 	isErr := strings.HasSuffix(msg.Subject(), ".stderr")
 	frag := components.ScriptOutputLine(scriptName, jobID, j.Data, isErr)
 	return sse.MergeFragmentTempl(frag, datastar.WithSelector(selector), datastar.WithMergeAppend())
 }
 
-// job exit
-
-type ScriptJobExit struct {
-	ExitCode      int    `json:"exit_code"`
-	CorrelationID string `json:"correlation_id"`
-}
-
-func renderJobExit(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator, selector string, e ScriptJobExit) error {
+func renderJobExit(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator, selector string, e messages.ScriptJobExitEvent) error {
 	scriptName, jobID := parseScriptSubject(msg.Subject())
 	frag := components.ScriptOutputLine(scriptName, jobID, fmt.Sprintf("exit %d", e.ExitCode), false)
 	return sse.MergeFragmentTempl(frag, datastar.WithSelector(selector), datastar.WithMergeAppend())
@@ -147,19 +103,19 @@ func renderJobExit(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerS
 func init() {
 	Specs = []RendererSpec{
 		// Doc viewer
-		{Pattern: "event.terminal.session.*.viewdoc", Build: func(subj string) Renderer {
-			return newTypedRenderer[ViewDocEvent](subj, renderViewDoc)
+		{Pattern: messages.TerminalViewDocSubjectPattern, Build: func(subj string) Renderer {
+			return newTypedRenderer[messages.TerminalViewDocEvent](subj, renderViewDoc)
 		}},
-		{Pattern: "event.terminal.session.*.freeze", Build: func(subj string) Renderer {
-			return newTypedRenderer[TerminalEvent](subj, renderTerminal)
+		{Pattern: messages.TerminalFreezeSubjectPattern, Build: func(subj string) Renderer {
+			return newTypedRenderer[messages.TerminalFreezeEvent](subj, renderTerminal)
 		}},
 
 		// script lifecycle
-		{Pattern: "event.script.*.created", Build: func(subj string) Renderer { return newSubRenderer(subj, renderScriptCreated) }},
-		{Pattern: "event.script.*.create.error", Build: func(subj string) Renderer { return newSubRenderer(subj, renderScriptCreateErr) }},
-		{Pattern: "event.script.*.job.*.started", Build: func(subj string) Renderer { return newSubRenderer(subj, renderJobStarted) }},
-		{Pattern: "event.script.*.job.*.stdout", Build: func(subj string) Renderer { return newSubRenderer(subj, renderJobOutput) }},
-		{Pattern: "event.script.*.job.*.stderr", Build: func(subj string) Renderer { return newSubRenderer(subj, renderJobOutput) }},
-		{Pattern: "event.script.*.job.*.exit", Build: func(subj string) Renderer { return newSubRenderer(subj, renderJobExit) }},
+		{Pattern: messages.ScriptCreatedSubjectPattern, Build: func(subj string) Renderer { return newSubRenderer(subj, renderScriptCreated) }},
+		{Pattern: messages.ScriptCreateErrorSubjectPattern, Build: func(subj string) Renderer { return newSubRenderer(subj, renderScriptCreateErr) }},
+		{Pattern: messages.ScriptJobStartedSubjectPattern, Build: func(subj string) Renderer { return newSubRenderer(subj, renderJobStarted) }},
+		{Pattern: messages.ScriptJobStdoutSubjectPattern, Build: func(subj string) Renderer { return newSubRenderer(subj, renderJobOutput) }},
+		{Pattern: messages.ScriptJobStderrSubjectPattern, Build: func(subj string) Renderer { return newSubRenderer(subj, renderJobOutput) }},
+		{Pattern: messages.ScriptJobExitSubjectPattern, Build: func(subj string) Renderer { return newSubRenderer(subj, renderJobExit) }},
 	}
 }

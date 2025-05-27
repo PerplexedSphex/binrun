@@ -11,6 +11,8 @@ import (
 
 	"slices"
 
+	"binrun/internal/messages"
+
 	"github.com/nats-io/nats.go/jetstream"
 )
 
@@ -19,11 +21,15 @@ import (
 // Any side-effecting commands (script create/run) are forwarded to the existing COMMAND stream subjects.
 
 type TerminalEngine struct {
-	js jetstream.JetStream
+	js        jetstream.JetStream
+	publisher *messages.Publisher
 }
 
 func NewTerminalEngine(js jetstream.JetStream) *TerminalEngine {
-	return &TerminalEngine{js: js}
+	return &TerminalEngine{
+		js:        js,
+		publisher: messages.NewPublisher(js),
+	}
 }
 
 // Start creates a consumer on TERMINAL_CMD and blocks until ctx is done.
@@ -44,7 +50,7 @@ func (te *TerminalEngine) Start(ctx context.Context) error {
 	cons, err := te.js.CreateOrUpdateConsumer(ctx, "TERMINAL", jetstream.ConsumerConfig{
 		Durable:        "TERMINAL_CMD",
 		AckPolicy:      jetstream.AckExplicitPolicy,
-		FilterSubjects: []string{"terminal.session.*.command"},
+		FilterSubjects: []string{messages.TerminalCommandSubjectPattern},
 		DeliverPolicy:  jetstream.DeliverAllPolicy,
 	})
 	if err != nil {
@@ -58,16 +64,6 @@ func (te *TerminalEngine) Start(ctx context.Context) error {
 		return fmt.Errorf("consume: %w", err)
 	}
 	return nil
-}
-
-// commandPayload is what the browser posts to /terminal, forwarded unchanged.
-type commandPayload struct {
-	Cmd string `json:"cmd"`
-}
-
-type freezeEvent struct {
-	Cmd    string `json:"cmd"`
-	Output string `json:"output"`
 }
 
 // helpText returns contextual help for a command. Empty cmd returns the general help overview.
@@ -98,7 +94,7 @@ ls preset <id>       Show the subjects a preset subscribes to.`
 }
 
 func (te *TerminalEngine) handleCommand(ctx context.Context, msg jetstream.Msg) {
-	var in commandPayload
+	var in messages.TerminalCommandMessage
 	if err := json.Unmarshal(msg.Data(), &in); err != nil {
 		slog.Warn("terminal: bad cmd payload", "err", err)
 		_ = msg.Ack()
@@ -109,6 +105,8 @@ func (te *TerminalEngine) handleCommand(ctx context.Context, msg jetstream.Msg) 
 		_ = msg.Ack()
 		return
 	}
+	// Set the session ID from the subject
+	in.SessionID = sid
 
 	parts := strings.Fields(in.Cmd)
 
@@ -181,22 +179,15 @@ func (te *TerminalEngine) handleCommand(ctx context.Context, msg jetstream.Msg) 
 		// Check if we found either a direct doc (README.md) or script files
 		if docPath == "README.md" || docPath == "script-view" {
 			// Publish viewdoc event so UI can render the markdown
-			evtSubj := fmt.Sprintf("event.terminal.session.%s.viewdoc", sid)
-
-			// Determine payload based on single doc or script view
 			var pathsPayload []string
 			if docPath == "README.md" {
 				pathsPayload = []string{"README.md"}
 			} else { // script-view
-				// pathsToView was populated in the default switch case above
-				pathsPayload = pathsToView // Use the collected paths
+				pathsPayload = pathsToView
 			}
 
-			// Only send the 'paths' field, as expected by ViewDocEvent
-			payload := map[string]any{"paths": pathsPayload}
-
-			data, _ := json.Marshal(payload)
-			if _, err := te.js.Publish(ctx, evtSubj, data); err != nil {
+			evt := messages.NewTerminalViewDocEvent(sid, pathsPayload)
+			if err := te.publisher.PublishEvent(ctx, evt); err != nil {
 				slog.Warn("terminal: publish viewdoc", "err", err)
 			}
 
@@ -210,6 +201,7 @@ func (te *TerminalEngine) handleCommand(ctx context.Context, msg jetstream.Msg) 
 				if entry != nil {
 					_ = json.Unmarshal(entry.Value(), &info)
 				}
+				evtSubj := messages.TerminalViewDocSubject(sid)
 				added := false
 				if !slices.Contains(info.Subscriptions, evtSubj) {
 					info.Subscriptions = append(info.Subscriptions, evtSubj)
@@ -243,13 +235,13 @@ func (te *TerminalEngine) handleCommand(ctx context.Context, msg jetstream.Msg) 
 		}
 		name := parts[2]
 		lang := parts[3]
-		payload := map[string]any{
-			"script_name":    name,
-			"script_type":    lang,
-			"correlation_id": in.Cmd,
+		cmd := messages.NewScriptCreateCommand(name, lang).WithCorrelation(in.Cmd)
+		if err := te.publisher.PublishCommand(ctx, cmd); err != nil {
+			slog.Error("Failed to publish script create command", "err", err)
+			outText = "error: failed to create script"
+		} else {
+			outText = "script create requested"
 		}
-		_ = te.publishCommand(ctx, "command.script.create", payload)
-		outText = "script create requested"
 
 	case strings.HasPrefix(in.Cmd, "script run "):
 		parts := strings.Split(in.Cmd, " ")
@@ -259,13 +251,15 @@ func (te *TerminalEngine) handleCommand(ctx context.Context, msg jetstream.Msg) 
 		}
 		name := parts[2]
 		args := parts[3:]
-		subj := fmt.Sprintf("command.script.%s.run", name)
-		payload := map[string]any{
-			"args":           args,
-			"correlation_id": in.Cmd,
+		cmd := messages.NewScriptRunCommand(name).
+			WithArgs(args...).
+			WithCorrelation(in.Cmd)
+		if err := te.publisher.PublishCommand(ctx, cmd); err != nil {
+			slog.Error("Failed to publish script run command", "err", err)
+			outText = "error: failed to run script"
+		} else {
+			outText = "script run requested"
 		}
-		_ = te.publishCommand(ctx, subj, payload)
-		outText = "script run requested"
 
 	default:
 		outText = "error: unknown command"
@@ -277,12 +271,6 @@ func (te *TerminalEngine) handleCommand(ctx context.Context, msg jetstream.Msg) 
 	}
 
 	te.sendFreeze(ctx, sid, in.Cmd, outText, msg)
-}
-
-func (te *TerminalEngine) publishCommand(ctx context.Context, subj string, body map[string]any) error {
-	data, _ := json.Marshal(body)
-	_, err := te.js.Publish(ctx, subj, data)
-	return err
 }
 
 func extractSessionFromTerminalSubject(subject string) string {
@@ -374,7 +362,7 @@ func (te *TerminalEngine) handlePresetCommand(ctx context.Context, sid string, c
 		subs := p.Build(flagArgs)
 
 		// include terminal freeze sub
-		term := fmt.Sprintf("event.terminal.session.%s.freeze", sid)
+		term := messages.TerminalFreezeSubject(sid)
 		if !slices.Contains(subs, term) {
 			subs = append(subs, term)
 		}
@@ -400,10 +388,8 @@ func (te *TerminalEngine) handlePresetCommand(ctx context.Context, sid string, c
 
 // sendFreeze publishes the freeze event and acks/naks appropriately.
 func (te *TerminalEngine) sendFreeze(ctx context.Context, sid, originalCmd, output string, msg jetstream.Msg) {
-	evt := freezeEvent{Cmd: originalCmd, Output: output}
-	data, _ := json.Marshal(evt)
-	evtSubj := fmt.Sprintf("event.terminal.session.%s.freeze", sid)
-	if _, err := te.js.Publish(ctx, evtSubj, data); err != nil {
+	evt := messages.NewTerminalFreezeEvent(sid, originalCmd, output)
+	if err := te.publisher.PublishEvent(ctx, evt); err != nil {
 		slog.Warn("terminal: publish feedback", "err", err)
 		_ = msg.Nak()
 		return
