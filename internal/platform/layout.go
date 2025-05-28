@@ -14,6 +14,11 @@ type LayoutNode struct {
 	// For leaf nodes
 	Subscription string `json:"subscription,omitempty"`
 
+	// For command nodes
+	Command  string         `json:"command,omitempty"`  // message type e.g. "ScriptCreateCommand"
+	Script   string         `json:"script,omitempty"`   // script name for script-specific commands
+	Defaults map[string]any `json:"defaults,omitempty"` // default field values
+
 	// For binary splits
 	Split  string      `json:"split,omitempty"` // "horizontal" | "vertical"
 	At     string      `json:"at,omitempty"`    // "1/2", "1/3", "2/3", "1/4", "3/4"
@@ -35,6 +40,9 @@ func (n *LayoutNode) NodeType() string {
 	if n.Subscription != "" {
 		return "leaf"
 	}
+	if n.Command != "" {
+		return "command"
+	}
 	if n.Split == "horizontal" || n.Split == "vertical" {
 		return "binary"
 	}
@@ -49,6 +57,8 @@ func (n *LayoutNode) Validate() error {
 	switch n.NodeType() {
 	case "leaf":
 		return n.validateLeaf()
+	case "command":
+		return n.validateCommand()
 	case "binary":
 		return n.validateBinary()
 	case "even":
@@ -60,12 +70,28 @@ func (n *LayoutNode) Validate() error {
 
 func (n *LayoutNode) validateLeaf() error {
 	// Leaf must have only subscription
-	if n.Split != "" || n.At != "" || n.First != nil || n.Second != nil ||
+	if n.Command != "" || n.Defaults != nil || n.Split != "" || n.At != "" || n.First != nil || n.Second != nil ||
 		n.Direction != "" || n.Items != nil {
 		return fmt.Errorf("leaf node must only have subscription field")
 	}
 	if n.Subscription == "" {
 		return fmt.Errorf("leaf node must have subscription")
+	}
+	return nil
+}
+
+func (n *LayoutNode) validateCommand() error {
+	// Command must have only command and optionally defaults
+	if n.Subscription != "" || n.Split != "" || n.At != "" || n.First != nil || n.Second != nil ||
+		n.Direction != "" || n.Items != nil {
+		return fmt.Errorf("command node must only have command, script, and defaults fields")
+	}
+	if n.Command == "" {
+		return fmt.Errorf("command node must have command")
+	}
+	// Validate script field is present for script-specific commands
+	if n.Command == "ScriptRunCommand" && n.Script == "" {
+		return fmt.Errorf("ScriptRunCommand requires script field")
 	}
 	return nil
 }

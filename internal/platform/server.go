@@ -73,12 +73,12 @@ func RunHTTPServer(ctx context.Context, nc *nats.Conn, cfg HTTPServerConfig) <-c
 	// metrics endpoint
 	r.Method(http.MethodGet, "/metrics", promhttp.Handler())
 
-	// application routes
-	r.Get("/health", Health)
-	r.Post("/command/{name}", SendCommand(nc))
-
 	// JetStream context for handlers
 	js, _ := jetstream.New(nc)
+
+	// application routes
+	r.Get("/health", Health)
+	r.Post("/command/*", SendCommand(nc, js))
 
 	// Terminal endpoint
 	r.Post("/terminal", TerminalCommandHandler(js))

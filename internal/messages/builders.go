@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
@@ -280,5 +281,52 @@ func SubjectPatterns() map[string]string {
 		"terminal.command":    TerminalCommandSubjectPattern,
 		"terminal.freeze":     TerminalFreezeSubjectPattern,
 		"terminal.viewdoc":    TerminalViewDocSubjectPattern,
+	}
+}
+
+// BuildCommand creates a typed command from UI form data
+func BuildCommand(messageType string, data map[string]any) (Command, error) {
+	switch messageType {
+	case "ScriptCreateCommand":
+		scriptName, _ := data["script_name"].(string)
+		scriptType, _ := data["script_type"].(string)
+		cmd := NewScriptCreateCommand(scriptName, scriptType)
+		if corrID, ok := data["correlation_id"].(string); ok && corrID != "" {
+			cmd.CorrelationID = corrID
+		}
+		return cmd, nil
+
+	case "ScriptRunCommand":
+		scriptName, _ := data["script_name"].(string)
+		cmd := NewScriptRunCommand(scriptName)
+
+		// Handle args - could be a single string or an array
+		if args, ok := data["args"].([]any); ok {
+			strArgs := make([]string, len(args))
+			for i, v := range args {
+				strArgs[i] = fmt.Sprint(v)
+			}
+			cmd = cmd.WithArgs(strArgs...)
+		} else if argStr, ok := data["args"].(string); ok && argStr != "" {
+			// Parse space-separated args for simple case
+			cmd = cmd.WithArgs(strings.Fields(argStr)...)
+		}
+
+		// Handle env - expecting key=value pairs
+		if envData, ok := data["env"].(map[string]any); ok {
+			envMap := make(map[string]string)
+			for k, v := range envData {
+				envMap[k] = fmt.Sprint(v)
+			}
+			cmd = cmd.WithEnv(envMap)
+		}
+
+		if corrID, ok := data["correlation_id"].(string); ok && corrID != "" {
+			cmd.CorrelationID = corrID
+		}
+		return cmd, nil
+
+	default:
+		return nil, fmt.Errorf("unknown command type: %s", messageType)
 	}
 }

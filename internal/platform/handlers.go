@@ -2,9 +2,11 @@ package platform
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 
 	"binrun/internal/messages"
 	"binrun/internal/runtime"
@@ -20,25 +22,163 @@ func Health(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// SendCommand publishes to command.{name} subject.
-func SendCommand(nc *nats.Conn) http.HandlerFunc {
+// SendCommand accepts a command name in the URL, and some JSON payload.
+// It publishes the payload to the subject "command.<name>".
+func SendCommand(nc *nats.Conn, js jetstream.JetStream) http.HandlerFunc {
+	publisher := messages.NewPublisher(js)
+
 	return func(w http.ResponseWriter, r *http.Request) {
-		name := chi.URLParam(r, "name")
-		if name == "" {
-			http.Error(w, "missing command name", http.StatusBadRequest)
-			return
+		// Extract the command path after /command/
+		path := strings.TrimPrefix(r.URL.Path, "/command/")
+
+		// Handle typed commands from forms
+		if path == "execute" {
+			var data map[string]any
+
+			// Check if this is form data
+			contentType := r.Header.Get("Content-Type")
+			if strings.Contains(contentType, "multipart/form-data") || strings.Contains(contentType, "application/x-www-form-urlencoded") {
+				// Parse form data
+				if err := r.ParseForm(); err != nil {
+					http.Error(w, "invalid form data", 400)
+					return
+				}
+				data = make(map[string]any)
+				for key, values := range r.Form {
+					if len(values) == 1 {
+						data[key] = values[0]
+					} else {
+						data[key] = values
+					}
+				}
+			} else {
+				// Parse JSON
+				if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+					http.Error(w, "invalid JSON", 400)
+					return
+				}
+			}
+
+			messageType, ok := data["_messageType"].(string)
+			if !ok {
+				http.Error(w, "missing _messageType", 400)
+				return
+			}
+
+			// Remove meta fields
+			delete(data, "_messageType")
+
+			// Build typed command
+			cmd, err := messages.BuildCommand(messageType, data)
+			if err != nil {
+				http.Error(w, err.Error(), 400)
+				return
+			}
+
+			// Validate before sending
+			if err := cmd.Validate(); err != nil {
+				http.Error(w, fmt.Sprintf("validation error: %v", err), 400)
+				return
+			}
+
+			// Publish using typed publisher
+			if err := publisher.PublishCommand(r.Context(), cmd); err != nil {
+				http.Error(w, fmt.Sprintf("publish error: %v", err), 500)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{
+				"status": "sent",
+				"type":   messageType,
+			})
+		} else if strings.HasPrefix(path, "script/") && strings.HasSuffix(path, "/run") {
+			// Handle script-specific run commands
+			// Extract script name from URL: script/{scriptName}/run
+			parts := strings.Split(path, "/")
+			if len(parts) != 3 || parts[0] != "script" || parts[2] != "run" {
+				http.Error(w, "invalid script run URL", 400)
+				return
+			}
+			scriptName := parts[1]
+
+			// Parse form data
+			if err := r.ParseForm(); err != nil {
+				http.Error(w, "invalid form data", 400)
+				return
+			}
+
+			// Build command data
+			data := make(map[string]any)
+			for key, values := range r.Form {
+				if len(values) == 1 {
+					data[key] = values[0]
+				} else {
+					data[key] = values
+				}
+			}
+
+			// Create ScriptRunCommand
+			cmd := messages.NewScriptRunCommand(scriptName)
+
+			// Handle args if provided
+			if args, ok := data["args"].(string); ok && args != "" {
+				cmd = cmd.WithArgs(strings.Fields(args)...)
+			}
+
+			// Handle env if provided
+			if envStr, ok := data["env"].(string); ok && envStr != "" {
+				// Parse key=value pairs (one per line)
+				envMap := make(map[string]string)
+				lines := strings.Split(envStr, "\n")
+				for _, line := range lines {
+					line = strings.TrimSpace(line)
+					if line == "" {
+						continue
+					}
+					parts := strings.SplitN(line, "=", 2)
+					if len(parts) == 2 {
+						envMap[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+					}
+				}
+				cmd = cmd.WithEnv(envMap)
+			}
+
+			// Validate before sending
+			if err := cmd.Validate(); err != nil {
+				http.Error(w, fmt.Sprintf("validation error: %v", err), 400)
+				return
+			}
+
+			// Publish using typed publisher
+			if err := publisher.PublishCommand(r.Context(), cmd); err != nil {
+				http.Error(w, fmt.Sprintf("publish error: %v", err), 500)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{
+				"status": "sent",
+				"script": scriptName,
+			})
+		} else {
+			// Legacy raw command handling
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, "invalid JSON", 400)
+				return
+			}
+
+			subj := "command." + path
+			data, _ := json.Marshal(payload)
+
+			if err := nc.Publish(subj, data); err != nil {
+				http.Error(w, "failed to publish", 500)
+				return
+			}
+
+			w.WriteHeader(http.StatusAccepted)
 		}
-		var payload map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&payload)
-		subj := "command." + name
-		data, _ := json.Marshal(payload)
-		if err := nc.Publish(subj, data); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(w).Encode(map[string]string{"published": subj})
 	}
 }
 

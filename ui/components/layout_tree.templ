@@ -9,6 +9,11 @@ type LayoutNode struct {
 	// For leaf nodes
 	Subscription string `json:"subscription,omitempty"`
 
+	// For command nodes
+	Command  string         `json:"command,omitempty"`
+	Script   string         `json:"script,omitempty"`
+	Defaults map[string]any `json:"defaults,omitempty"`
+
 	// For binary splits
 	Split  string      `json:"split,omitempty"`
 	At     string      `json:"at,omitempty"`
@@ -29,6 +34,9 @@ type PanelLayout struct {
 func (n *LayoutNode) NodeType() string {
 	if n.Subscription != "" {
 		return "leaf"
+	}
+	if n.Command != "" {
+		return "command"
 	}
 	if n.Split == "horizontal" || n.Split == "vertical" {
 		return "binary"
@@ -59,6 +67,8 @@ templ renderLayoutNode(node *LayoutNode, panelName string, path string) {
 	switch node.NodeType() {
 	case "leaf":
 		@renderLeafNode(node, panelName, path)
+	case "command":
+		@renderCommandNode(node, panelName, path)
 	case "binary":
 		@renderBinaryNode(node, panelName, path)
 	case "even":
@@ -70,6 +80,13 @@ templ renderLayoutNode(node *LayoutNode, panelName string, path string) {
 templ renderLeafNode(node *LayoutNode, panelName string, path string) {
 	<div class="layout-leaf" data-path={path}>
 		@SubscriptionContainer(node.Subscription)
+	</div>
+}
+
+// renderCommandNode renders a command form
+templ renderCommandNode(node *LayoutNode, panelName string, path string) {
+	<div class="layout-command" data-path={path}>
+		@CommandForm(node.Command, node.Script, node.Defaults)
 	</div>
 }
 

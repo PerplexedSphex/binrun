@@ -322,6 +322,95 @@ nats kv get layouts my-dashboard
 - Invalid layouts fall back to grid display
 - Only the `main` panel currently supports layouts (left, right, bottom panels can be added)
 
+**Note**: Saved layouts are stored in the NATS KV bucket "layouts" (not yet implemented).
+
+---
+
+## Command Widgets
+
+The declarative layout system supports interactive command forms that allow users to send typed NATS commands through the UI.
+
+### Command Node Type
+
+Command nodes render forms for sending messages:
+
+```json
+{
+  "command": "ScriptCreateCommand",
+  "defaults": {
+    "script_type": "python"
+  }
+}
+```
+
+For script-specific commands, use the `script` field:
+
+```json
+{
+  "command": "ScriptRunCommand",
+  "script": "testbun",
+  "defaults": {
+    "args": "--verbose"
+  }
+}
+```
+
+### Supported Commands
+
+Commands are automatically generated from the message schema using struct tags:
+
+- **ScriptCreateCommand**: Create a new script project
+  - `script_name` (required, text)
+  - `script_type` (required, select: python/typescript)
+
+- **ScriptRunCommand**: Run an existing script
+  - Script name is specified in the layout `script` field
+  - `args` (optional, text - space-separated)
+  - `env` (optional, key-value pairs)
+
+### Field Types
+
+The system infers field types from Go struct tags:
+- `field_type:"select"` with `options:"python,typescript"`
+- `required:"true"` for required fields
+- `placeholder:"my-script"` for placeholder text
+
+### Example Layout with Commands
+
+```json
+{
+  "layout": {
+    "panels": {
+      "left": {
+        "split": "vertical",
+        "at": "1/2",
+        "first": {
+          "command": "ScriptCreateCommand",
+          "defaults": {"script_type": "python"}
+        },
+        "second": {
+          "command": "ScriptRunCommand",
+          "script": "myapp",
+          "defaults": {"args": "--debug"}
+        }
+      }
+    }
+  }
+}
+```
+
+This creates:
+- Top left: Form to create new scripts (defaults to python)
+- Bottom left: Form to run the "myapp" script specifically
+
+### API
+
+Commands are sent via POST to:
+- `/command/execute` for general commands (with `_messageType` field)
+- `/command/script/{name}/run` for script-specific run commands
+
+The forms use Datastar's form handling with proper validation. All field values are bound to signals for reactive updates.
+
 ---
 
 # Appendix: JetStream 80/20 CLI & Go API Reference

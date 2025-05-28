@@ -58,8 +58,8 @@ const (
 
 // ScriptCreateCommand requests creation of a new script project
 type ScriptCreateCommand struct {
-	ScriptName    string `json:"script_name"`
-	ScriptType    string `json:"script_type"` // "python" | "typescript"
+	ScriptName    string `json:"script_name" required:"true" placeholder:"my-script"`
+	ScriptType    string `json:"script_type" required:"true" field_type:"select" options:"python,typescript"`
 	CorrelationID string `json:"correlation_id,omitempty"`
 }
 
@@ -72,8 +72,8 @@ func (c ScriptCreateCommand) Validate() error {
 // ScriptRunCommand requests execution of an existing script
 type ScriptRunCommand struct {
 	ScriptName    string            `json:"-"` // Derived from subject
-	Args          []string          `json:"args,omitempty"`
-	Env           map[string]string `json:"env,omitempty"`
+	Args          []string          `json:"args,omitempty" placeholder:"--verbose --debug"`
+	Env           map[string]string `json:"env,omitempty" placeholder:"KEY=value"`
 	CorrelationID string            `json:"correlation_id,omitempty"`
 }
 
