@@ -57,6 +57,13 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 			return
 		}
 
+		// Parse layout if present
+		layout, err := ParseLayout(info.Layout)
+		if err != nil {
+			slog.Warn("Invalid layout in session", "sid", sid, "err", err)
+			// Continue with no layout
+		}
+
 		termSubj := messages.TerminalFreezeSubject(sid)
 		if !slices.Contains(info.Subscriptions, termSubj) {
 			info.Subscriptions = append(info.Subscriptions, termSubj)
@@ -83,8 +90,34 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 					gridSubs = append(gridSubs, s)
 				}
 			}
-			grid := components.SubscriptionsGrid(gridSubs)
-			_ = sse.MergeFragmentTempl(grid)
+
+			// Use layout-aware rendering if layout is present
+			if layout != nil {
+				// Convert layout for UI components
+				uiLayout, err := ConvertLayoutForUI(layout)
+				if err != nil {
+					slog.Warn("Failed to convert layout for UI", "err", err)
+					// Fallback to grid
+					grid := components.SubscriptionsGrid(gridSubs)
+					_ = sse.MergeFragmentTempl(grid)
+				} else {
+					// Render layout trees for panels defined in layout (left / main / right)
+					panelNames := []string{"left", "main", "right"}
+					for _, pn := range panelNames {
+						if uiLayout.Panels != nil {
+							if _, ok := uiLayout.Panels[pn]; !ok {
+								continue
+							}
+						}
+						tree := components.LayoutTree(uiLayout, pn)
+						_ = sse.MergeFragmentTempl(tree)
+					}
+				}
+			} else {
+				// Fallback to simple grid
+				grid := components.SubscriptionsGrid(gridSubs)
+				_ = sse.MergeFragmentTempl(grid)
+			}
 		}
 
 		// --- Setup for watcher ---
@@ -152,6 +185,13 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 
 				var newInfo SessionInfo
 				_ = json.Unmarshal(update.Value(), &newInfo)
+
+				// Parse new layout
+				newLayout, err := ParseLayout(newInfo.Layout)
+				if err != nil {
+					slog.Warn("Invalid layout in session update", "sid", sid, "err", err)
+				}
+
 				newSubs := newInfo.Subscriptions
 				// Ensure terminal sub is present for comparison
 				if !slices.Contains(newSubs, termSubj) {
@@ -178,15 +218,40 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 							gridSubs = append(gridSubs, s)
 						}
 					}
-					grid := components.SubscriptionsGrid(gridSubs)
-					_ = sse.MergeFragmentTempl(grid)
 
-					// Recreate renderer set and consumer
-					sessionRenderers = runtime.ForSubjects(newSubs)
-					consumerCancel()
-					<-consumerDone
-					consumerCancel, consumerDone = createConsumer(newSubs, sessionRenderers)
-					currentSubs = newSubs
+					// Use layout-aware rendering if layout is present
+					if newLayout != nil {
+						// Convert layout for UI components
+						uiLayout, err := ConvertLayoutForUI(newLayout)
+						if err != nil {
+							slog.Warn("Failed to convert layout for UI", "err", err)
+							// Fallback to grid
+							grid := components.SubscriptionsGrid(gridSubs)
+							_ = sse.MergeFragmentTempl(grid)
+						} else {
+							// Render layout trees for panels defined in layout
+							panelNames := []string{"left", "main", "right"}
+							for _, pn := range panelNames {
+								if uiLayout.Panels != nil {
+									if _, ok := uiLayout.Panels[pn]; !ok {
+										continue
+									}
+								}
+								tree := components.LayoutTree(uiLayout, pn)
+								_ = sse.MergeFragmentTempl(tree)
+							}
+						}
+
+						// Update stored layout reference
+						layout = newLayout
+
+						// Recreate renderer set and consumer
+						sessionRenderers = runtime.ForSubjects(newSubs)
+						consumerCancel()
+						<-consumerDone
+						consumerCancel, consumerDone = createConsumer(newSubs, sessionRenderers)
+						currentSubs = newSubs
+					}
 				}
 			}
 		}()

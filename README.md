@@ -217,6 +217,113 @@ The `Publisher` automatically validates messages before publishing, returning cl
 
 ---
 
+## Declarative Layout System
+
+The application supports a declarative layout system for arranging subscription tiles within panels. Layouts are defined as JSON structures and stored in the session KV.
+
+### Layout Node Types
+
+1. **Leaf Node**: Displays a single subscription
+```json
+{"subscription": "event.cpu.host1.freeze"}
+```
+
+2. **Binary Split**: Divides space between two children
+```json
+{
+  "split": "horizontal",  // or "vertical"
+  "at": "2/3",           // fractions: "1/2", "1/3", "2/3", "1/4", "3/4"
+  "first": {...},        // any node type
+  "second": {...}        // any node type
+}
+```
+
+3. **Even Split**: Divides space equally among N children
+```json
+{
+  "split": "even-3",     // "even-2" through "even-5"
+  "direction": "horizontal",  // or "vertical"
+  "items": [{...}, {...}, {...}]
+}
+```
+
+### Setting Layouts
+
+Layouts are set via the session KV entry:
+
+```bash
+# Simple two-panel layout
+nats kv put sessions $SESSION_ID '{
+  "subscriptions": ["event.orders.*", "event.logs.*"],
+  "layout": {
+    "panels": {
+      "main": {
+        "split": "horizontal",
+        "at": "2/3",
+        "first": {"subscription": "event.orders.*"},
+        "second": {"subscription": "event.logs.*"}
+      }
+    }
+  }
+}'
+
+# Complex nested layout
+nats kv put sessions $SESSION_ID '{
+  "subscriptions": ["event.cpu.*", "event.memory.*", "event.disk.*", "event.logs.*"],
+  "layout": {
+    "panels": {
+      "main": {
+        "split": "horizontal",
+        "at": "3/4",
+        "first": {
+          "split": "even-3",
+          "direction": "horizontal",
+          "items": [
+            {"subscription": "event.cpu.*"},
+            {"subscription": "event.memory.*"},
+            {"subscription": "event.disk.*"}
+          ]
+        },
+        "second": {"subscription": "event.logs.*"}
+      }
+    }
+  }
+}'
+```
+
+### Saving Layouts
+
+Layouts can be saved to the `layouts` KV bucket for reuse:
+
+```bash
+# Save a layout
+nats kv put layouts "my-dashboard" '{
+  "panels": {
+    "main": {
+      "split": "vertical",
+      "at": "1/2",
+      "first": {"subscription": "event.metrics.*"},
+      "second": {"subscription": "event.logs.*"}
+    }
+  }
+}'
+
+# List saved layouts
+nats kv keys layouts
+
+# Get a saved layout
+nats kv get layouts my-dashboard
+```
+
+### Layout Behavior
+
+- If no layout is specified, subscriptions are displayed in a simple grid
+- Subscriptions in the layout must match those in the subscriptions array
+- Invalid layouts fall back to grid display
+- Only the `main` panel currently supports layouts (left, right, bottom panels can be added)
+
+---
+
 # Appendix: JetStream 80/20 CLI & Go API Reference
 
 ## NATS CLI – Streams, Consumers, KV, Object Store

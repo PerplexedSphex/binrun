@@ -17,11 +17,6 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 )
 
-// SessionInfo represents the value stored in the "sessions" KV bucket for each session.
-type SessionInfo struct {
-	Subscriptions []string `json:"subscriptions"`
-}
-
 // SubjectConsumer tracks an ephemeral consumer (push) per subject and its subscribers.
 type SubjectConsumer struct {
 	Subject  string
@@ -100,6 +95,17 @@ func Run(ctx context.Context, nc *nats.Conn, ns *server.Server) {
 		slog.Warn("Error creating KV bucket", "err", err)
 	}
 	slog.Info("KV bucket 'sessions' created for session subscription info.")
+
+	// Create a Key-Value bucket "layouts" for saved layout configurations
+	_, err = js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{
+		Bucket:  "layouts",
+		History: 5,
+		Storage: jetstream.FileStorage,
+	})
+	if err != nil {
+		slog.Warn("Error creating layouts KV bucket", "err", err)
+	}
+	slog.Info("KV bucket 'layouts' created for saved layout configurations.")
 
 	// 6. Set up a watcher on the entire "sessions" bucket to catch changes (new API).
 	watcher, err := kv.Watch(ctx, jetstream.AllKeys)

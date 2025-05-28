@@ -216,3 +216,64 @@ aside, main { padding: var(--size-3); box-sizing: border-box; }
 .script-data.stderr {
     color: var(--red-6);
 }
+
+/* Layout Tree styles */
+.layout-root {
+    height: 100%;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.layout-leaf {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+}
+
+/* Binary splits */
+.layout-split {
+    height: 100%;
+    width: 100%;
+    display: grid;
+    gap: var(--size-2);
+}
+
+.layout-split-horizontal {
+    /* grid-template-rows set inline via style attribute */
+}
+
+.layout-split-vertical {
+    /* grid-template-columns set inline via style attribute */
+}
+
+.layout-split-first,
+.layout-split-second {
+    overflow: hidden;
+}
+
+/* Even splits */
+.layout-even {
+    height: 100%;
+    width: 100%;
+    display: grid;
+    gap: var(--size-2);
+}
+
+.layout-even-horizontal {
+    /* grid-template-columns set inline via style attribute */
+}
+
+.layout-even-vertical {
+    /* grid-template-rows set inline via style attribute */
+}
+
+.layout-even-item {
+    overflow: hidden;
+}
+
+/* Ensure subscription boxes fill their containers in layouts */
+.layout-leaf .subscription-box {
+    height: 100%;
+    margin: 0;
+}
