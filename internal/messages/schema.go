@@ -34,8 +34,8 @@ type Event interface {
 
 const (
 	// Script domain - Commands
-	ScriptCreateSubject     = "command.script.create"
-	ScriptRunSubjectPattern = "command.script.*.run" // * = script name
+	ScriptCreateSubject = "command.script.create"
+	ScriptRunSubject    = "command.script.run" // Static subject
 
 	// Script domain - Events
 	ScriptCreatedSubjectPattern     = "event.script.*.created"       // * = script name
@@ -47,7 +47,7 @@ const (
 	ScriptJobErrorSubjectPattern    = "event.script.*.job.error" // * = script name
 
 	// Terminal domain
-	TerminalCommandSubjectPattern = "terminal.session.*.command" // * = session id
+	TerminalCommandSubject        = "terminal.command" // Static subject
 	TerminalFreezeSubjectPattern  = "event.terminal.session.*.freeze"
 	TerminalViewDocSubjectPattern = "event.terminal.session.*.viewdoc"
 )
@@ -71,16 +71,14 @@ func (c ScriptCreateCommand) Validate() error {
 
 // ScriptRunCommand requests execution of an existing script
 type ScriptRunCommand struct {
-	ScriptName    string            `json:"-"` // Derived from subject
+	ScriptName    string            `json:"script_name" required:"true" placeholder:"my-script"`
 	Args          []string          `json:"args,omitempty" placeholder:"--verbose --debug"`
 	Env           map[string]string `json:"env,omitempty" placeholder:"KEY=value"`
 	CorrelationID string            `json:"correlation_id,omitempty"`
 }
 
-func (c ScriptRunCommand) Subject() string {
-	return fmt.Sprintf("command.script.%s.run", c.ScriptName)
-}
-func (c ScriptRunCommand) IsCommand() {}
+func (c ScriptRunCommand) Subject() string { return ScriptRunSubject }
+func (c ScriptRunCommand) IsCommand()      {}
 func (c ScriptRunCommand) Validate() error {
 	return validateScriptRunCommand(c)
 }
@@ -190,14 +188,12 @@ func (e ScriptJobErrorEvent) Validate() error      { return nil }
 
 // TerminalCommandMessage represents a command entered in the terminal
 type TerminalCommandMessage struct {
-	SessionID string `json:"-"` // Derived from subject
-	Cmd       string `json:"cmd"`
+	SessionID string `json:"session_id" required:"true"`
+	Cmd       string `json:"cmd" required:"true"`
 }
 
-func (c TerminalCommandMessage) Subject() string {
-	return fmt.Sprintf("terminal.session.%s.command", c.SessionID)
-}
-func (c TerminalCommandMessage) IsCommand() {}
+func (c TerminalCommandMessage) Subject() string { return TerminalCommandSubject }
+func (c TerminalCommandMessage) IsCommand()      {}
 func (c TerminalCommandMessage) Validate() error {
 	if c.SessionID == "" {
 		return fmt.Errorf("session_id is required")
@@ -241,11 +237,7 @@ func (e TerminalViewDocEvent) Validate() error      { return nil }
 // HELPER FUNCTIONS
 // =============================================================================
 
-// Subject builder functions for dynamic subjects
-func ScriptRunSubject(scriptName string) string {
-	return fmt.Sprintf("command.script.%s.run", scriptName)
-}
-
+// Subject builder functions for dynamic subjects (events only)
 func ScriptCreatedSubject(scriptName string) string {
 	return fmt.Sprintf("event.script.%s.created", scriptName)
 }
@@ -272,10 +264,6 @@ func ScriptJobExitSubject(scriptName, jobID string) string {
 
 func ScriptJobErrorSubject(scriptName string) string {
 	return fmt.Sprintf("event.script.%s.job.error", scriptName)
-}
-
-func TerminalCommandSubject(sessionID string) string {
-	return fmt.Sprintf("terminal.session.%s.command", sessionID)
 }
 
 func TerminalFreezeSubject(sessionID string) string {

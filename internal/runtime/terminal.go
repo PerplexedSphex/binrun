@@ -37,7 +37,7 @@ func (te *TerminalEngine) Start(ctx context.Context) error {
 	// Ensure stream exists
 	if _, err := te.js.CreateStream(ctx, jetstream.StreamConfig{
 		Name:     "TERMINAL",
-		Subjects: []string{"terminal.session.*.*"},
+		Subjects: []string{"terminal.command"},
 		Storage:  jetstream.FileStorage,
 	}); err != nil {
 		// if already exists ignore
@@ -50,7 +50,7 @@ func (te *TerminalEngine) Start(ctx context.Context) error {
 	cons, err := te.js.CreateOrUpdateConsumer(ctx, "TERMINAL", jetstream.ConsumerConfig{
 		Durable:        "TERMINAL_CMD",
 		AckPolicy:      jetstream.AckExplicitPolicy,
-		FilterSubjects: []string{messages.TerminalCommandSubjectPattern},
+		FilterSubjects: []string{messages.TerminalCommandSubject},
 		DeliverPolicy:  jetstream.DeliverAllPolicy,
 	})
 	if err != nil {
@@ -100,13 +100,14 @@ func (te *TerminalEngine) handleCommand(ctx context.Context, msg jetstream.Msg) 
 		_ = msg.Ack()
 		return
 	}
-	sid := extractSessionFromTerminalSubject(msg.Subject())
+
+	// Session ID now comes from the message body
+	sid := in.SessionID
 	if sid == "" {
+		slog.Warn("terminal: missing session ID in message body")
 		_ = msg.Ack()
 		return
 	}
-	// Set the session ID from the subject
-	in.SessionID = sid
 
 	parts := strings.Fields(in.Cmd)
 
@@ -271,15 +272,6 @@ func (te *TerminalEngine) handleCommand(ctx context.Context, msg jetstream.Msg) 
 	}
 
 	te.sendFreeze(ctx, sid, in.Cmd, outText, msg)
-}
-
-func extractSessionFromTerminalSubject(subject string) string {
-	// terminal.session.<sid>.command
-	parts := strings.Split(subject, ".")
-	if len(parts) >= 3 {
-		return parts[2]
-	}
-	return ""
 }
 
 // helper to parse flags in form --key value

@@ -270,7 +270,7 @@ func (p *Publisher) PublishEvent(ctx context.Context, evt Event) error {
 func SubjectPatterns() map[string]string {
 	return map[string]string{
 		"script.create":       ScriptCreateSubject,
-		"script.run":          ScriptRunSubjectPattern,
+		"script.run":          ScriptRunSubject,
 		"script.created":      ScriptCreatedSubjectPattern,
 		"script.create.error": ScriptCreateErrorSubjectPattern,
 		"script.job.started":  ScriptJobStartedSubjectPattern,
@@ -278,7 +278,7 @@ func SubjectPatterns() map[string]string {
 		"script.job.stderr":   ScriptJobStderrSubjectPattern,
 		"script.job.exit":     ScriptJobExitSubjectPattern,
 		"script.job.error":    ScriptJobErrorSubjectPattern,
-		"terminal.command":    TerminalCommandSubjectPattern,
+		"terminal.command":    TerminalCommandSubject,
 		"terminal.freeze":     TerminalFreezeSubjectPattern,
 		"terminal.viewdoc":    TerminalViewDocSubjectPattern,
 	}
@@ -326,7 +326,21 @@ func BuildCommand(messageType string, data map[string]any) (Command, error) {
 		}
 		return cmd, nil
 
+	case "TerminalCommandMessage":
+		sessionID, _ := data["session_id"].(string)
+		cmdText, _ := data["cmd"].(string)
+		return NewTerminalCommandMessage(sessionID, cmdText), nil
+
 	default:
 		return nil, fmt.Errorf("unknown command type: %s", messageType)
+	}
+}
+
+// GetCommandTypes returns all available command message types
+func GetCommandTypes() []string {
+	return []string{
+		"ScriptCreateCommand",
+		"ScriptRunCommand",
+		"TerminalCommandMessage",
 	}
 }

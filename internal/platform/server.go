@@ -78,7 +78,7 @@ func RunHTTPServer(ctx context.Context, nc *nats.Conn, cfg HTTPServerConfig) <-c
 
 	// application routes
 	r.Get("/health", Health)
-	r.Post("/command/*", SendCommand(nc, js))
+	r.Post("/command", SendCommand(nc, js))
 
 	// Terminal endpoint
 	r.Post("/terminal", TerminalCommandHandler(js))

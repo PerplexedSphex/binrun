@@ -10,9 +10,12 @@ templ CommandForm(messageType string, script string, defaults map[string]any) {
 	<form class="command-form" 
 	      data-on-submit={getSubmitAction(messageType, script)}>
 		
-		// Include message type as hidden field for generic commands
-		if !(messageType == "ScriptRunCommand" && script != "") {
-			<input type="hidden" name="_messageType" value={messageType} />
+		// Always include message type as hidden field
+		<input type="hidden" name="_messageType" value={messageType} />
+		
+		// For script-specific commands, include script name
+		if messageType == "ScriptRunCommand" && script != "" {
+			<input type="hidden" name="script_name" value={script} />
 		}
 		
 		<h4 class="command-title">
@@ -23,7 +26,12 @@ templ CommandForm(messageType string, script string, defaults map[string]any) {
 		</h4>
 		
 		for _, field := range messages.GetFieldSchemas(messageType) {
-			@renderField(field, getDefault(defaults, field.JSONName))
+			// Skip script_name field if we're setting it from the script parameter
+			if field.JSONName == "script_name" && messageType == "ScriptRunCommand" && script != "" {
+				// Skip rendering this field since we're setting it via hidden input
+			} else {
+				@renderField(field, getDefault(defaults, field.JSONName))
+			}
 		}
 		
 		<button type="submit" class="command-submit">Execute</button>
@@ -105,10 +113,6 @@ func getDefault(defaults map[string]any, key string) any {
 
 // getSubmitAction returns the appropriate datastar action for the command
 func getSubmitAction(messageType string, script string) string {
-	// For script-specific commands, use the script name in the URL
-	if messageType == "ScriptRunCommand" && script != "" {
-		return fmt.Sprintf("@post('/command/script/%s/run', {contentType: 'form'})", script)
-	}
-	// For general commands, send the message type as a hidden field
-	return "@post('/command/execute', {contentType: 'form'})"
+	// All commands now use the unified endpoint
+	return "@post('/command', {contentType: 'form'})"
 } 

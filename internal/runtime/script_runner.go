@@ -58,12 +58,12 @@ func NewScriptRunner(nc *nats.Conn, js jetstream.JetStream, scriptsDir string) *
 
 // Start subscribes to script create/run commands and manages job lifecycle.
 func (sr *ScriptRunner) Start(ctx context.Context) error {
-	// Create consumers for script.create and script.*.run
+	// Create consumers for script.create and script.run
 	if err := sr.setupConsumer(ctx, "SCRIPT_CREATE", messages.ScriptCreateSubject, sr.handleCreate); err != nil {
 		return err
 	}
 
-	if err := sr.setupConsumer(ctx, "SCRIPT_RUN", messages.ScriptRunSubjectPattern, sr.handleRun); err != nil {
+	if err := sr.setupConsumer(ctx, "SCRIPT_RUN", messages.ScriptRunSubject, sr.handleRun); err != nil {
 		return err
 	}
 
@@ -159,25 +159,22 @@ func (sr *ScriptRunner) handleCreate(ctx context.Context, msg jetstream.Msg) {
 	_ = msg.Ack()
 }
 
-// handleRun processes command.script.<name>.run messages.
+// handleRun processes command.script.run messages.
 func (sr *ScriptRunner) handleRun(ctx context.Context, msg jetstream.Msg) {
-	// Extract script name from subject
-	parts := strings.Split(msg.Subject(), ".")
-	if len(parts) < 4 {
-		slog.Error("Malformed run subject", "subject", msg.Subject())
-		_ = msg.Ack()
-		return
-	}
-
-	scriptName := parts[2]
 	var in messages.ScriptRunCommand
 	if err := json.Unmarshal(msg.Data(), &in); err != nil {
 		slog.Error("Invalid run payload", "err", err)
 		_ = msg.Ack()
 		return
 	}
-	// Set the script name from the subject
-	in.ScriptName = scriptName
+
+	// Script name now comes from the message body
+	scriptName := in.ScriptName
+	if scriptName == "" {
+		slog.Error("Missing script name in message body")
+		_ = msg.Ack()
+		return
+	}
 
 	dir := filepath.Join(sr.scriptsDir, scriptName)
 	info, err := os.Stat(dir)
