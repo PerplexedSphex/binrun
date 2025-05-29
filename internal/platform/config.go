@@ -7,17 +7,15 @@ package platform
 // FlagsConfig holds all boolean or string flags for the app.
 
 type FlagsConfig struct {
-	Sim bool
 	// Headless disables the HTTP server when true.
 	Headless bool
 	// Add more flags here as needed
 }
 
-// AppConfig holds top-level application configuration.
+// AppConfig contains the configuration for the app.
 type AppConfig struct {
 	Flags      *FlagsConfig
 	NatsCfg    *EmbeddedServerConfig
-	SimCfg     *SimConfig
 	HTTPSrvCfg *HTTPServerConfig
 }
 
@@ -27,14 +25,12 @@ func LoadAppConfig() *AppConfig {
 		Flags:      defaultFlagsCfg(),
 		NatsCfg:    defaultNatsCfg(),
 		HTTPSrvCfg: defaultHTTPServerCfg(),
-		SimCfg:     defaultSimCfg(),
 	}
 }
 
 // defaultFlagsCfg returns the default FlagsConfig (from env).
 func defaultFlagsCfg() *FlagsConfig {
 	return &FlagsConfig{
-		Sim:      false, // strings.ToLower(os.Getenv("SIM")) == "true",
 		Headless: false, // strings.ToLower(os.Getenv("HEADLESS")) == "true",
 	}
 }
@@ -60,17 +56,5 @@ func defaultNatsCfg() *EmbeddedServerConfig {
 		JetStream:       true,
 		JetStreamDomain: "",
 		StoreDir:        "./store/js",
-	}
-}
-
-// defaultSimCfg returns the default SimConfig.
-func defaultSimCfg() *SimConfig {
-	return &SimConfig{
-		NumSessions:           10,
-		NumSubjectsPerSession: 3,
-		NumEventsPerSubject:   5,
-		NumCommands:           5,
-		SessionChurn:          2,
-		InspectionLevel:       1,
 	}
 }

@@ -5,12 +5,9 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"binrun/internal/messages"
 	components "binrun/ui/components"
-
-	"slices"
 
 	runtime "binrun/internal/runtime"
 
@@ -64,18 +61,6 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 			// Continue with no layout
 		}
 
-		termSubj := messages.TerminalFreezeSubject(sid)
-		if !slices.Contains(info.Subscriptions, termSubj) {
-			info.Subscriptions = append(info.Subscriptions, termSubj)
-			slices.Sort(info.Subscriptions)
-			data, _ := json.Marshal(info)
-			// Update the KV store with the corrected list
-			if _, putErr := kv.Put(ctx, sid, data); putErr != nil {
-				slog.Error("UIStream: Failed to update session KV with terminal sub", "sid", sid, "err", putErr)
-				// Don't fail the request, just log it. Proceed with the in-memory list.
-			}
-		}
-
 		if len(info.Subscriptions) == 0 {
 			http.Error(w, "no subscriptions", 404)
 			return
@@ -83,13 +68,8 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 
 		// Render grid for initial subscriptions (using the now-complete list)
 		{
-			// Filter out terminal subjects before rendering the grid
-			gridSubs := []string{}
-			for _, s := range info.Subscriptions {
-				if !strings.HasPrefix(s, "event.terminal.session.") {
-					gridSubs = append(gridSubs, s)
-				}
-			}
+			// Use all subscriptions directly
+			gridSubs := info.Subscriptions
 
 			// Use layout-aware rendering if layout is present
 			if layout != nil {
@@ -193,11 +173,7 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 				}
 
 				newSubs := newInfo.Subscriptions
-				// Ensure terminal sub is present for comparison
-				if !slices.Contains(newSubs, termSubj) {
-					newSubs = append(newSubs, termSubj)
-				}
-				slices.Sort(newSubs)
+				// No terminal sub logic here
 
 				// Compare sorted lists
 				subsChanged := len(newSubs) != len(currentSubs)
@@ -211,13 +187,8 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 				}
 
 				if subsChanged {
-					// Render grid update using actual KV subs (filter out terminal)
-					gridSubs := []string{}
-					for _, s := range newInfo.Subscriptions {
-						if !strings.HasPrefix(s, "event.terminal.session.") {
-							gridSubs = append(gridSubs, s)
-						}
-					}
+					// Use all subscriptions directly
+					gridSubs := newInfo.Subscriptions
 
 					// Use layout-aware rendering if layout is present
 					if newLayout != nil {
