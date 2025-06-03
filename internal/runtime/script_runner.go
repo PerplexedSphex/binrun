@@ -1,3 +1,11 @@
+// =============================================================================
+// Script Runner – nested .env–aware, copy‑paste ready
+// =============================================================================
+// This replacement embeds the env‑loading strategy:
+//   OS env → repo‑level .env → script‑level .env → run‑payload overrides
+// so that every spawned script has its own deterministic environment slice.
+// =============================================================================
+
 package runtime
 
 import (
@@ -15,69 +23,140 @@ import (
 
 	"binrun/internal/messages"
 
+	"github.com/joho/godotenv"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/rs/xid"
 )
 
-// ScriptRunner manages script creation and execution via NATS commands.
+// =============================================================================
+// helpers – repo root discovery & env merging
+// =============================================================================
+
+// repoRoot walks upward from start until it finds a .git directory or go.mod file.
+func repoRoot(start string) (string, error) {
+	dir := filepath.Clean(start)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir, nil
+		}
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("repo root not found from %s", start)
+		}
+		dir = parent
+	}
+}
+
+// mergeEnv constructs the final env map according to precedence.
+// 1. OS env                      (highest)
+// 2. repo .env                   (only if key is still unset)
+// 3. script .env                 (override)
+// 4. explicit overrides (payload) (override)
+func mergeEnv(repoEnv, scriptEnv, payload map[string]string) map[string]string {
+	out := map[string]string{}
+
+	// 1. OS env
+	for _, kv := range os.Environ() {
+		parts := strings.SplitN(kv, "=", 2)
+		out[parts[0]] = parts[1]
+	}
+
+	// 2. repo defaults (only if absent)
+	for k, v := range repoEnv {
+		if _, exists := out[k]; !exists {
+			out[k] = v
+		}
+	}
+
+	// 3. script overrides
+	for k, v := range scriptEnv {
+		out[k] = v
+	}
+
+	// 4. payload overrides (highest among files)
+	for k, v := range payload {
+		out[k] = v
+	}
+
+	return out
+}
+
+// mapToEnv converts map[string]string → []string{"k=v"} for exec.Cmd.Env.
+func mapToEnv(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k, v := range m {
+		out = append(out, fmt.Sprintf("%s=%s", k, v))
+	}
+	return out
+}
+
+// =============================================================================
+// ScriptRunner
+// =============================================================================
+
 type ScriptRunner struct {
 	nc         *nats.Conn
 	js         jetstream.JetStream
 	publisher  *messages.Publisher
+	rootDir    string // where the repo‑level .env lives
 	scriptsDir string
 	langs      map[string]LangImpl
-	jobs       sync.Map // jobID -> cancelFunc
+	jobs       sync.Map // jobID → cancelFunc
 }
 
-// LangImpl defines language-specific script init/run logic.
+type jobState struct {
+	cancel context.CancelFunc
+}
+
+// LangImpl defines language‑specific init & run hooks.
+// Run receives a *merged* env map.
+
 type LangImpl interface {
 	Init(ctx context.Context, dir string) error
 	Run(ctx context.Context, dir string, args []string, env map[string]string) *exec.Cmd
 }
 
-// jobState tracks a running script job.
-type jobState struct {
-	cancel context.CancelFunc
-}
-
-// NewScriptRunner constructs a ScriptRunner with language adapters.
+// NewScriptRunner sets up the runner, language adapters, and loads repo .env so
+// the runner itself (logs, JetStream config, etc.) can consume those vars.
 func NewScriptRunner(nc *nats.Conn, js jetstream.JetStream, scriptsDir string) *ScriptRunner {
+	root, _ := repoRoot(scriptsDir)                // ignore error → empty string
+	_ = godotenv.Load(filepath.Join(root, ".env")) // repo‑wide defaults for the runner
+
 	langs := map[string]LangImpl{
 		"python":     pythonImpl{},
 		"typescript": tsImpl{},
 	}
+
 	return &ScriptRunner{
 		nc:         nc,
 		js:         js,
 		publisher:  messages.NewPublisher(js),
+		rootDir:    root,
 		scriptsDir: scriptsDir,
 		langs:      langs,
 	}
 }
 
-// Start subscribes to script create/run commands and manages job lifecycle.
+// -----------------------------------------------------------------------------
+// lifecycle
+// -----------------------------------------------------------------------------
+
 func (sr *ScriptRunner) Start(ctx context.Context) error {
-	// Create consumers for script.create and script.run
 	if err := sr.setupConsumer(ctx, "SCRIPT_CREATE", messages.ScriptCreateSubject, sr.handleCreate); err != nil {
 		return err
 	}
-
 	if err := sr.setupConsumer(ctx, "SCRIPT_RUN", messages.ScriptRunSubject, sr.handleRun); err != nil {
 		return err
 	}
-
-	// Shutdown: cancel all jobs on context done
-	go func() {
-		<-ctx.Done()
-		sr.stopAllJobs()
-	}()
-
+	go func() { <-ctx.Done(); sr.stopAllJobs() }()
 	return nil
 }
 
-// setupConsumer creates/updates a consumer and starts consumption
-func (sr *ScriptRunner) setupConsumer(ctx context.Context, name string, subject string, handler func(context.Context, jetstream.Msg)) error {
+func (sr *ScriptRunner) setupConsumer(ctx context.Context, name, subject string, handler func(context.Context, jetstream.Msg)) error {
 	_, err := sr.js.CreateOrUpdateConsumer(ctx, "COMMAND", jetstream.ConsumerConfig{
 		Durable:        name,
 		AckPolicy:      jetstream.AckExplicitPolicy,
@@ -86,23 +165,18 @@ func (sr *ScriptRunner) setupConsumer(ctx context.Context, name string, subject 
 	if err != nil {
 		return fmt.Errorf("create %s consumer: %w", name, err)
 	}
-
 	consumer, err := sr.js.Consumer(ctx, "COMMAND", name)
 	if err != nil {
 		return fmt.Errorf("get %s consumer: %w", name, err)
 	}
-
-	_, err = consumer.Consume(func(msg jetstream.Msg) {
-		handler(ctx, msg)
-	})
-	if err != nil {
-		return fmt.Errorf("consume %s: %w", name, err)
-	}
-
-	return nil
+	_, err = consumer.Consume(func(msg jetstream.Msg) { handler(ctx, msg) })
+	return err
 }
 
-// handleCreate processes command.script.create messages.
+// -----------------------------------------------------------------------------
+// command.script.create
+// -----------------------------------------------------------------------------
+
 func (sr *ScriptRunner) handleCreate(ctx context.Context, msg jetstream.Msg) {
 	slog.Info("Received script create command", "payload", string(msg.Data()))
 
@@ -118,11 +192,8 @@ func (sr *ScriptRunner) handleCreate(ctx context.Context, msg jetstream.Msg) {
 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		slog.Error("Failed to create script directory", "dir", dir, "err", err)
-		evt := messages.NewScriptCreateErrorEvent(in.ScriptName, err.Error()).
-			WithCorrelation(in.CorrelationID)
-		if pubErr := sr.publisher.PublishEvent(ctx, evt); pubErr != nil {
-			slog.Error("Failed to publish create error event", "err", pubErr)
-		}
+		evt := messages.NewScriptCreateErrorEvent(in.ScriptName, err.Error()).WithCorrelation(in.CorrelationID)
+		_ = sr.publisher.PublishEvent(ctx, evt)
 		_ = msg.Ack()
 		return
 	}
@@ -130,36 +201,29 @@ func (sr *ScriptRunner) handleCreate(ctx context.Context, msg jetstream.Msg) {
 	impl := sr.langs[in.ScriptType]
 	if impl == nil {
 		slog.Error("Unsupported script type", "script_type", in.ScriptType)
-		evt := messages.NewScriptCreateErrorEvent(in.ScriptName, "unsupported script_type").
-			WithCorrelation(in.CorrelationID)
-		if pubErr := sr.publisher.PublishEvent(ctx, evt); pubErr != nil {
-			slog.Error("Failed to publish create error event", "err", pubErr)
-		}
+		evt := messages.NewScriptCreateErrorEvent(in.ScriptName, "unsupported script_type").WithCorrelation(in.CorrelationID)
+		_ = sr.publisher.PublishEvent(ctx, evt)
 		_ = msg.Ack()
 		return
 	}
 
 	if err := impl.Init(ctx, dir); err != nil {
 		slog.Error("Script initialization failed", "name", in.ScriptName, "err", err)
-		evt := messages.NewScriptCreateErrorEvent(in.ScriptName, err.Error()).
-			WithCorrelation(in.CorrelationID)
-		if pubErr := sr.publisher.PublishEvent(ctx, evt); pubErr != nil {
-			slog.Error("Failed to publish create error event", "err", pubErr)
-		}
+		evt := messages.NewScriptCreateErrorEvent(in.ScriptName, err.Error()).WithCorrelation(in.CorrelationID)
+		_ = sr.publisher.PublishEvent(ctx, evt)
 		_ = msg.Ack()
 		return
 	}
 
-	slog.Info("Script created successfully", "name", in.ScriptName, "type", in.ScriptType)
-	evt := messages.NewScriptCreatedEvent(in.ScriptName, in.ScriptType).
-		WithCorrelation(in.CorrelationID)
-	if err := sr.publisher.PublishEvent(ctx, evt); err != nil {
-		slog.Error("Failed to publish created event", "err", err)
-	}
+	evt := messages.NewScriptCreatedEvent(in.ScriptName, in.ScriptType).WithCorrelation(in.CorrelationID)
+	_ = sr.publisher.PublishEvent(ctx, evt)
 	_ = msg.Ack()
 }
 
-// handleRun processes command.script.run messages.
+// -----------------------------------------------------------------------------
+// command.script.run (env‑aware)
+// -----------------------------------------------------------------------------
+
 func (sr *ScriptRunner) handleRun(ctx context.Context, msg jetstream.Msg) {
 	var in messages.ScriptRunCommand
 	if err := json.Unmarshal(msg.Data(), &in); err != nil {
@@ -168,7 +232,6 @@ func (sr *ScriptRunner) handleRun(ctx context.Context, msg jetstream.Msg) {
 		return
 	}
 
-	// Script name now comes from the message body
 	scriptName := in.ScriptName
 	if scriptName == "" {
 		slog.Error("Missing script name in message body")
@@ -177,26 +240,24 @@ func (sr *ScriptRunner) handleRun(ctx context.Context, msg jetstream.Msg) {
 	}
 
 	dir := filepath.Join(sr.scriptsDir, scriptName)
-	info, err := os.Stat(dir)
-	if err != nil || !info.IsDir() {
-		evt := messages.NewScriptJobErrorEvent(scriptName, "script not found").
-			WithCorrelation(in.CorrelationID)
-		if pubErr := sr.publisher.PublishEvent(ctx, evt); pubErr != nil {
-			slog.Error("Failed to publish job error event", "err", pubErr)
-		}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		evt := messages.NewScriptJobErrorEvent(scriptName, "script not found").WithCorrelation(in.CorrelationID)
+		_ = sr.publisher.PublishEvent(ctx, evt)
 		_ = msg.Ack()
 		return
 	}
 
-	// Find script type by looking for known files
+	// ---- env layering ------------------------------------------------------
+	repoEnv, _ := godotenv.Read(filepath.Join(sr.rootDir, ".env"))
+	scriptEnv, _ := godotenv.Read(filepath.Join(dir, ".env"))
+	envMap := mergeEnv(repoEnv, scriptEnv, in.Env)
+	// -----------------------------------------------------------------------
+
 	scriptType := sr.detectScriptType(dir)
 	impl := sr.langs[scriptType]
 	if impl == nil {
-		evt := messages.NewScriptJobErrorEvent(scriptName, "unknown script type").
-			WithCorrelation(in.CorrelationID)
-		if pubErr := sr.publisher.PublishEvent(ctx, evt); pubErr != nil {
-			slog.Error("Failed to publish job error event", "err", pubErr)
-		}
+		evt := messages.NewScriptJobErrorEvent(scriptName, "unknown script type").WithCorrelation(in.CorrelationID)
+		_ = sr.publisher.PublishEvent(ctx, evt)
 		_ = msg.Ack()
 		return
 	}
@@ -205,51 +266,41 @@ func (sr *ScriptRunner) handleRun(ctx context.Context, msg jetstream.Msg) {
 	jobCtx, cancel := context.WithCancel(ctx)
 	sr.jobs.Store(jobID, jobState{cancel: cancel})
 
-	cmd := impl.Run(jobCtx, dir, in.Args, in.Env)
+	cmd := impl.Run(jobCtx, dir, in.Args, envMap)
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
 
 	if err := cmd.Start(); err != nil {
-		evt := messages.NewScriptJobExitEvent(scriptName, jobID, -1).
-			WithError(err.Error()).
-			WithCorrelation(in.CorrelationID)
-		if pubErr := sr.publisher.PublishEvent(ctx, evt); pubErr != nil {
-			slog.Error("Failed to publish exit event", "err", pubErr)
-		}
+		evt := messages.NewScriptJobExitEvent(scriptName, jobID, -1).WithError(err.Error()).WithCorrelation(in.CorrelationID)
+		_ = sr.publisher.PublishEvent(ctx, evt)
 		cancel()
 		sr.jobs.Delete(jobID)
 		_ = msg.Ack()
 		return
 	}
 
-	// Publish started event
-	evt := messages.NewScriptJobStartedEvent(scriptName, jobID, cmd.Process.Pid).
-		WithCorrelation(in.CorrelationID)
-	if err := sr.publisher.PublishEvent(ctx, evt); err != nil {
-		slog.Error("Failed to publish started event", "err", err)
-	}
+	evt := messages.NewScriptJobStartedEvent(scriptName, jobID, cmd.Process.Pid).WithCorrelation(in.CorrelationID)
+	_ = sr.publisher.PublishEvent(ctx, evt)
 
-	// Pump stdout/stderr
 	go sr.pumpOutput(jobCtx, stdout, scriptName, jobID, "stdout", in.CorrelationID)
 	go sr.pumpOutput(jobCtx, stderr, scriptName, jobID, "stderr", in.CorrelationID)
-
-	// Wait for exit
 	go sr.waitForExit(ctx, cmd, scriptName, jobID, cancel, in.CorrelationID)
 
 	_ = msg.Ack()
 }
 
-// detectScriptType determines script type by file presence
+// detectScriptType looks for canonical files to decide which LangImpl to use.
 func (sr *ScriptRunner) detectScriptType(dir string) string {
 	if _, err := os.Stat(filepath.Join(dir, "main.py")); err == nil {
 		return "python"
-	} else if _, err := os.Stat(filepath.Join(dir, "index.ts")); err == nil {
+	}
+	if _, err := os.Stat(filepath.Join(dir, "index.ts")); err == nil {
 		return "typescript"
 	}
 	return ""
 }
 
-// waitForExit waits for the process to exit and publishes event
+// waitForExit captures process termination and publishes exit event.
 func (sr *ScriptRunner) waitForExit(ctx context.Context, cmd *exec.Cmd, scriptName, jobID string, cancel context.CancelFunc, correlationID string) {
 	err := cmd.Wait()
 	exitCode := 0
@@ -266,33 +317,26 @@ func (sr *ScriptRunner) waitForExit(ctx context.Context, cmd *exec.Cmd, scriptNa
 		slog.Info("Script process completed successfully", "script", scriptName, "job_id", jobID)
 	}
 
-	evt := messages.NewScriptJobExitEvent(scriptName, jobID, exitCode).
-		WithCorrelation(correlationID)
+	evt := messages.NewScriptJobExitEvent(scriptName, jobID, exitCode).WithCorrelation(correlationID)
 	if exitError != "" {
 		evt = evt.WithError(exitError)
 	}
-
-	if err := sr.publisher.PublishEvent(ctx, evt); err != nil {
-		slog.Error("Failed to publish exit event", "err", err)
-	}
+	_ = sr.publisher.PublishEvent(ctx, evt)
 
 	cancel()
 	sr.jobs.Delete(jobID)
 }
 
-// pumpOutput streams output lines as events.
+// pumpOutput streams each line of stdout/stderr as events.
 func (sr *ScriptRunner) pumpOutput(ctx context.Context, r io.Reader, scriptName, jobID, stream, correlationID string) {
 	scanner := bufio.NewScanner(r)
 	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 1024*1024) // up to 1MB lines
+	scanner.Buffer(buf, 1024*1024)
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		evt := messages.NewScriptJobOutputEvent(scriptName, jobID, stream, line).
-			WithCorrelation(correlationID)
-		if err := sr.publisher.PublishEvent(ctx, evt); err != nil {
-			slog.Error("Failed to publish output event", "err", err)
-		}
+		evt := messages.NewScriptJobOutputEvent(scriptName, jobID, stream, line).WithCorrelation(correlationID)
+		_ = sr.publisher.PublishEvent(ctx, evt)
 
 		select {
 		case <-ctx.Done():
@@ -302,21 +346,7 @@ func (sr *ScriptRunner) pumpOutput(ctx context.Context, r io.Reader, scriptName,
 	}
 }
 
-// publishEvent sends an event to the EVENT stream with optional correlation_id header.
-func (sr *ScriptRunner) publishEvent(subject string, body map[string]any, correlationID string) {
-	data, _ := json.Marshal(body)
-	msg := &nats.Msg{
-		Subject: subject,
-		Data:    data,
-		Header:  nats.Header{},
-	}
-	if correlationID != "" {
-		msg.Header.Set("correlation_id", correlationID)
-	}
-	_ = sr.nc.PublishMsg(msg)
-}
-
-// stopAllJobs cancels all running jobs.
+// stopAllJobs cancels any running scripts when the runner shuts down.
 func (sr *ScriptRunner) stopAllJobs() {
 	sr.jobs.Range(func(key, value any) bool {
 		if js, ok := value.(jobState); ok {
@@ -327,7 +357,10 @@ func (sr *ScriptRunner) stopAllJobs() {
 	})
 }
 
-// pythonImpl implements LangImpl for Python scripts.
+// =============================================================================
+// Language adapters
+// =============================================================================
+
 type pythonImpl struct{}
 
 func (pythonImpl) Init(ctx context.Context, dir string) error {
@@ -337,22 +370,15 @@ func (pythonImpl) Init(ctx context.Context, dir string) error {
 }
 
 func (pythonImpl) Run(ctx context.Context, dir string, args []string, env map[string]string) *exec.Cmd {
-	// Join args for command string
-	argStr := strings.Join(args, " ")
-
-	// Create venv (idempotent), install deps, then run
-	cmdStr := fmt.Sprintf("uv venv && uv pip install . && uv run main.py %s", argStr)
-
+	cmdStr := fmt.Sprintf("uv venv && uv pip install . && uv run main.py %s", strings.Join(args, " "))
 	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
 	cmd.Dir = dir
-
-	// Merge existing environment with any custom env vars provided in the run payload.
-	cmd.Env = append(os.Environ(), mapToEnv(env)...)
-
+	cmd.Env = mapToEnv(env)
 	return cmd
 }
 
-// tsImpl implements LangImpl for TypeScript scripts.
+// ---------------------------------------------------------------------------
+
 type tsImpl struct{}
 
 func (tsImpl) Init(ctx context.Context, dir string) error {
@@ -362,21 +388,9 @@ func (tsImpl) Init(ctx context.Context, dir string) error {
 }
 
 func (tsImpl) Run(ctx context.Context, dir string, args []string, env map[string]string) *exec.Cmd {
-	// Chain 'bun install' and 'bun run index.ts ...' in a shell
-	cmd := exec.CommandContext(ctx, "sh", "-c", "bun install && bun run index.ts "+strings.Join(args, " "))
+	cmdStr := "bun install && bun run index.ts " + strings.Join(args, " ")
+	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), mapToEnv(env)...)
+	cmd.Env = mapToEnv(env)
 	return cmd
-}
-
-// mapToEnv converts a map to []string{"k=v"} for os/exec.
-func mapToEnv(m map[string]string) []string {
-	if m == nil {
-		return []string{}
-	}
-	out := make([]string, 0, len(m))
-	for k, v := range m {
-		out = append(out, fmt.Sprintf("%s=%s", k, v))
-	}
-	return out
 }
