@@ -14,6 +14,7 @@ require (
 	github.com/nats-io/nats.go v1.41.2
 	github.com/prometheus/client_golang v1.18.0
 	github.com/rs/xid v1.6.0
+	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
 	github.com/starfederation/datastar v0.21.4
 	github.com/yuin/goldmark v1.7.11
 	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc

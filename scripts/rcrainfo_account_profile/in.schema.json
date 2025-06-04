@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RcrainfoAccountProfileInput",
+  "type": "object",
+  "properties": {
+    "input_file": { "type": "string", "description": "Path to the input CSV file." },
+    "output_dir": { "type": "string", "description": "Path to the output directory." },
+    "run_rcra": { "type": "boolean", "default": true },
+    "run_frs": { "type": "boolean", "default": true }
+  },
+  "required": ["input_file", "output_dir"],
+  "additionalProperties": false
+} 

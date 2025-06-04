@@ -253,7 +253,7 @@ func (te *TerminalEngine) handleCommand(ctx context.Context, msg jetstream.Msg) 
 		name := parts[2]
 		args := parts[3:]
 		cmd := messages.NewScriptRunCommand(name).
-			WithArgs(args...).
+			WithInput(json.RawMessage(strings.Join(args, " "))).
 			WithCorrelation(in.Cmd)
 		if err := te.publisher.PublishCommand(ctx, cmd); err != nil {
 			slog.Error("Failed to publish script run command", "err", err)

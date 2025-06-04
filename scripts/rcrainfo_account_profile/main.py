@@ -9,6 +9,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Set
+import json
 
 import duckdb
 import pandas as pd
@@ -556,24 +557,18 @@ def run_search_pipeline(search_terms_path: Path, run_rcra: bool=True, run_frs: b
 # CLI
 # -------------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(description="Run RCRA/FRS search pipelines.")
-    parser.add_argument("search_terms", type=Path, help="Path to search terms CSV")
-    parser.add_argument("--all", action="store_true", help="Run all searches (RCRA + FRS).")
-    parser.add_argument("--rcra", action="store_true", help="Run only RCRA search.")
-    parser.add_argument("--frs", action="store_true", help="Run only FRS search.")
-    args = parser.parse_args()
+    # Load input JSON
+    input_path = Path(sys.argv[1])
+    inp = json.loads(input_path.read_text())
+    # Example: inp = {"input_file": ..., "output_dir": ..., "run_rcra": ..., "run_frs": ...}
 
-    if not any([args.all, args.rcra, args.frs]):
-        parser.print_help()
-        return
+    # TODO: Replace below with actual logic using inp fields
+    print(f"Loaded input: {inp}")
+    # ... rest of your pipeline logic ...
 
-    run_rcra_flag = args.all or args.rcra
-    run_frs_flag = args.all or args.frs
-    outputs = run_search_pipeline(args.search_terms, run_rcra=run_rcra_flag, run_frs=run_frs_flag)
-
-    print("\n=== Pipeline Summary ===")
-    for k, p in outputs.items():
-        print(f"{k.upper()} results --> {p}")
+    # If you later add out.schema.json, emit a structured result like:
+    # result = {"summary": "..."}
+    # print("##DATA##" + json.dumps(result))
 
 if __name__ == "__main__":
     main()

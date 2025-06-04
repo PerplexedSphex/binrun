@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
@@ -34,12 +33,6 @@ func NewScriptRunCommand(name string) *ScriptRunCommand {
 	return &ScriptRunCommand{ScriptName: name}
 }
 
-// WithArgs adds arguments to script run command
-func (c *ScriptRunCommand) WithArgs(args ...string) *ScriptRunCommand {
-	c.Args = args
-	return c
-}
-
 // WithEnv adds environment variables to script run command
 func (c *ScriptRunCommand) WithEnv(env map[string]string) *ScriptRunCommand {
 	c.Env = env
@@ -49,6 +42,12 @@ func (c *ScriptRunCommand) WithEnv(env map[string]string) *ScriptRunCommand {
 // WithCorrelation adds correlation ID to script run command
 func (c *ScriptRunCommand) WithCorrelation(id string) *ScriptRunCommand {
 	c.CorrelationID = id
+	return c
+}
+
+// WithInput sets the JSON payload for the script run command.
+func (c *ScriptRunCommand) WithInput(input json.RawMessage) *ScriptRunCommand {
+	c.Input = input
 	return c
 }
 
@@ -148,6 +147,22 @@ func NewScriptJobErrorEvent(scriptName, errorMsg string) *ScriptJobErrorEvent {
 
 // WithCorrelation adds correlation ID to job error event
 func (e *ScriptJobErrorEvent) WithCorrelation(id string) *ScriptJobErrorEvent {
+	e.CorrelationID = id
+	return e
+}
+
+// NewScriptJobDataEvent creates an event carrying structured JSON.
+func NewScriptJobDataEvent(scriptName, jobID string, payload []byte) *ScriptJobDataEvent {
+	return &ScriptJobDataEvent{
+		ScriptName: scriptName,
+		JobID:      jobID,
+		Payload:    json.RawMessage(payload),
+		EmittedAt:  time.Now(),
+	}
+}
+
+// WithCorrelation adds correlation ID to the data event.
+func (e *ScriptJobDataEvent) WithCorrelation(id string) *ScriptJobDataEvent {
 	e.CorrelationID = id
 	return e
 }
@@ -278,6 +293,7 @@ func SubjectPatterns() map[string]string {
 		"script.job.stderr":   ScriptJobStderrSubjectPattern,
 		"script.job.exit":     ScriptJobExitSubjectPattern,
 		"script.job.error":    ScriptJobErrorSubjectPattern,
+		"script.job.data":     ScriptJobDataSubjectPattern,
 		"terminal.command":    TerminalCommandSubject,
 		"terminal.freeze":     TerminalFreezeSubjectPattern,
 		"terminal.viewdoc":    TerminalViewDocSubjectPattern,
@@ -291,8 +307,8 @@ func BuildCommand(messageType string, data map[string]any) (Command, error) {
 		scriptName, _ := data["script_name"].(string)
 		scriptType, _ := data["script_type"].(string)
 		cmd := NewScriptCreateCommand(scriptName, scriptType)
-		if corrID, ok := data["correlation_id"].(string); ok && corrID != "" {
-			cmd.CorrelationID = corrID
+		if cid, ok := data["correlation_id"].(string); ok && cid != "" {
+			cmd.CorrelationID = cid
 		}
 		return cmd, nil
 
@@ -300,36 +316,36 @@ func BuildCommand(messageType string, data map[string]any) (Command, error) {
 		scriptName, _ := data["script_name"].(string)
 		cmd := NewScriptRunCommand(scriptName)
 
-		// Handle args - could be a single string or an array
-		if args, ok := data["args"].([]any); ok {
-			strArgs := make([]string, len(args))
-			for i, v := range args {
-				strArgs[i] = fmt.Sprint(v)
+		// -------- handle input JSON (single payload) -----------------------
+		if raw, ok := data["input"]; ok {
+			switch v := raw.(type) {
+			case string:
+				cmd = cmd.WithInput(json.RawMessage(v))
+			default: // map / slice etc.
+				if b, err := json.Marshal(v); err == nil {
+					cmd = cmd.WithInput(b)
+				}
 			}
-			cmd = cmd.WithArgs(strArgs...)
-		} else if argStr, ok := data["args"].(string); ok && argStr != "" {
-			// Parse space-separated args for simple case
-			cmd = cmd.WithArgs(strings.Fields(argStr)...)
 		}
 
-		// Handle env - expecting key=value pairs
+		// -------- env vars --------------------------------------------------
 		if envData, ok := data["env"].(map[string]any); ok {
-			envMap := make(map[string]string)
+			env := make(map[string]string)
 			for k, v := range envData {
-				envMap[k] = fmt.Sprint(v)
+				env[k] = fmt.Sprint(v)
 			}
-			cmd = cmd.WithEnv(envMap)
+			cmd = cmd.WithEnv(env)
 		}
 
-		if corrID, ok := data["correlation_id"].(string); ok && corrID != "" {
-			cmd.CorrelationID = corrID
+		if cid, ok := data["correlation_id"].(string); ok && cid != "" {
+			cmd.CorrelationID = cid
 		}
 		return cmd, nil
 
 	case "TerminalCommandMessage":
-		sessionID, _ := data["session_id"].(string)
+		sid, _ := data["session_id"].(string)
 		cmdText, _ := data["cmd"].(string)
-		return NewTerminalCommandMessage(sessionID, cmdText), nil
+		return NewTerminalCommandMessage(sid, cmdText), nil
 
 	default:
 		return nil, fmt.Errorf("unknown command type: %s", messageType)

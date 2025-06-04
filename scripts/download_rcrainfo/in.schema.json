@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DownloadRcrainfoInput",
+  "type": "object",
+  "properties": {
+    "dataset": { "type": "string", "enum": ["rcra", "ce", "ca", "br", "emanifest"], "description": "Which dataset to run the ETL for." },
+    "skip_download": { "type": "boolean", "default": false, "description": "Skip downloading data, only run the loading into DuckDB." }
+  },
+  "required": ["dataset"],
+  "additionalProperties": false
+} 

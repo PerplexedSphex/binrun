@@ -1,6 +1,7 @@
 # etl.py
 
-import argparse
+import sys
+import json
 import logging
 import os
 from pathlib import Path
@@ -269,21 +270,18 @@ def run_etl(dataset_key: str, skip_download: bool = False) -> None:
 # Optional CLI
 # ---------------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(description="Run ETL pipelines for EPA data")
-    parser.add_argument(
-        "dataset",
-        choices=list(DATASETS.keys()),
-        help="Which dataset to run the ETL for"
-    )
-    parser.add_argument(
-        "--skip-download",
-        action="store_true",
-        help="Skip downloading data, only run the loading into DuckDB"
-    )
-    args = parser.parse_args()
+    # Load input JSON
+    input_path = Path(sys.argv[1])
+    inp = json.loads(input_path.read_text())
+    # inp = {"dataset": ..., "skip_download": ...}
 
-    run_etl(args.dataset, skip_download=args.skip_download)
+    # TODO: Replace below with actual logic using inp fields
+    print(f"Loaded input: {inp}")
+    # ... rest of your ETL logic ...
 
+    # If you later add out.schema.json, emit a structured result like:
+    # result = {"summary": "..."}
+    # print("##DATA##" + json.dumps(result))
 
 if __name__ == "__main__":
     main()

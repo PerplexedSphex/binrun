@@ -1,6 +1,7 @@
 package messages
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -44,7 +45,8 @@ const (
 	ScriptJobStdoutSubjectPattern   = "event.script.*.job.*.stdout"
 	ScriptJobStderrSubjectPattern   = "event.script.*.job.*.stderr"
 	ScriptJobExitSubjectPattern     = "event.script.*.job.*.exit"
-	ScriptJobErrorSubjectPattern    = "event.script.*.job.error" // * = script name
+	ScriptJobErrorSubjectPattern    = "event.script.*.job.error"  // * = script name
+	ScriptJobDataSubjectPattern     = "event.script.*.job.*.data" // NEW
 
 	// Terminal domain
 	TerminalCommandSubject        = "terminal.command" // Static subject
@@ -71,10 +73,10 @@ func (c ScriptCreateCommand) Validate() error {
 
 // ScriptRunCommand requests execution of an existing script
 type ScriptRunCommand struct {
-	ScriptName    string            `json:"script_name" required:"true" placeholder:"my-script"`
-	Args          []string          `json:"args,omitempty" placeholder:"--verbose --debug"`
-	Env           map[string]string `json:"env,omitempty" placeholder:"KEY=value"`
-	CorrelationID string            `json:"correlation_id,omitempty"`
+	ScriptName    string            `json:"script_name"`
+	Input         json.RawMessage   `json:"input"` // NEW
+	Env           map[string]string `json:"env"`
+	CorrelationID string            `json:"cid"`
 }
 
 func (c ScriptRunCommand) Subject() string { return ScriptRunSubject }
@@ -182,6 +184,22 @@ func (e ScriptJobErrorEvent) IsEvent()             {}
 func (e ScriptJobErrorEvent) Timestamp() time.Time { return e.OccurredAt }
 func (e ScriptJobErrorEvent) Validate() error      { return nil }
 
+// ScriptJobDataEvent carries structured JSON emitted by a running job.
+type ScriptJobDataEvent struct {
+	ScriptName    string          `json:"script_name"`
+	JobID         string          `json:"job_id"`
+	Payload       json.RawMessage `json:"payload"`
+	EmittedAt     time.Time       `json:"emitted_at"`
+	CorrelationID string          `json:"correlation_id,omitempty"`
+}
+
+func (e ScriptJobDataEvent) Subject() string {
+	return fmt.Sprintf("event.script.%s.job.%s.data", e.ScriptName, e.JobID)
+}
+func (e ScriptJobDataEvent) IsEvent()             {}
+func (e ScriptJobDataEvent) Timestamp() time.Time { return e.EmittedAt }
+func (e ScriptJobDataEvent) Validate() error      { return nil }
+
 // =============================================================================
 // TERMINAL DOMAIN
 // =============================================================================
@@ -264,6 +282,10 @@ func ScriptJobExitSubject(scriptName, jobID string) string {
 
 func ScriptJobErrorSubject(scriptName string) string {
 	return fmt.Sprintf("event.script.%s.job.error", scriptName)
+}
+
+func ScriptJobDataSubject(scriptName, jobID string) string {
+	return fmt.Sprintf("event.script.%s.job.%s.data", scriptName, jobID)
 }
 
 func TerminalFreezeSubject(sessionID string) string {

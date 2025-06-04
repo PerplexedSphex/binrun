@@ -1,9 +1,12 @@
 // =============================================================================
-// Script Runner – nested .env–aware, copy‑paste ready
-// =============================================================================
-// This replacement embeds the env‑loading strategy:
-//   OS env → repo‑level .env → script‑level .env → run‑payload overrides
-// so that every spawned script has its own deterministic environment slice.
+// Script Runner – env layering *plus* schema‑aware I/O and code‑gen
+// Copy‑paste this file into runtime/script_runner.go.  Requires:
+//   • Go 1.22+
+//   • github.com/joho/godotenv          (env files)
+//   • github.com/santhosh-tekuri/jsonschema/v5 (JSON‑Schema validation)
+//   • External CLIs for code‑gen (installed via Taskfile):
+//       – npx json-schema-to-typescript
+//       – datamodel-codegen
 // =============================================================================
 
 package runtime
@@ -27,6 +30,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/rs/xid"
+	jsonschema "github.com/santhosh-tekuri/jsonschema/v5"
 )
 
 // =============================================================================
@@ -92,6 +96,14 @@ func mapToEnv(m map[string]string) []string {
 		out = append(out, fmt.Sprintf("%s=%s", k, v))
 	}
 	return out
+}
+
+// runCmd is a small wrapper to exec.CommandContext that proxies stdio.
+func runCmd(ctx context.Context, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 // =============================================================================
@@ -174,7 +186,7 @@ func (sr *ScriptRunner) setupConsumer(ctx context.Context, name, subject string,
 }
 
 // -----------------------------------------------------------------------------
-// command.script.create
+// command.script.create – also runs schema→type code‑gen
 // -----------------------------------------------------------------------------
 
 func (sr *ScriptRunner) handleCreate(ctx context.Context, msg jetstream.Msg) {
@@ -215,17 +227,26 @@ func (sr *ScriptRunner) handleCreate(ctx context.Context, msg jetstream.Msg) {
 		return
 	}
 
+	// --- JSON‑Schema → static types --------------------------------------
+	if err := sr.codegenSchemas(ctx, dir, in.ScriptType); err != nil {
+		slog.Error("Schema code‑gen failed", "script", in.ScriptName, "err", err)
+		evt := messages.NewScriptCreateErrorEvent(in.ScriptName, err.Error()).WithCorrelation(in.CorrelationID)
+		_ = sr.publisher.PublishEvent(ctx, evt)
+		_ = msg.Ack()
+		return
+	}
+
 	evt := messages.NewScriptCreatedEvent(in.ScriptName, in.ScriptType).WithCorrelation(in.CorrelationID)
 	_ = sr.publisher.PublishEvent(ctx, evt)
 	_ = msg.Ack()
 }
 
 // -----------------------------------------------------------------------------
-// command.script.run (env‑aware)
+// command.script.run – validates input & output against schema
 // -----------------------------------------------------------------------------
 
 func (sr *ScriptRunner) handleRun(ctx context.Context, msg jetstream.Msg) {
-	var in messages.ScriptRunCommand
+	var in messages.ScriptRunCommand // modified struct: {ScriptName, Input, Env, CorrelationID}
 	if err := json.Unmarshal(msg.Data(), &in); err != nil {
 		slog.Error("Invalid run payload", "err", err)
 		_ = msg.Ack()
@@ -233,12 +254,6 @@ func (sr *ScriptRunner) handleRun(ctx context.Context, msg jetstream.Msg) {
 	}
 
 	scriptName := in.ScriptName
-	if scriptName == "" {
-		slog.Error("Missing script name in message body")
-		_ = msg.Ack()
-		return
-	}
-
 	dir := filepath.Join(sr.scriptsDir, scriptName)
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		evt := messages.NewScriptJobErrorEvent(scriptName, "script not found").WithCorrelation(in.CorrelationID)
@@ -247,11 +262,19 @@ func (sr *ScriptRunner) handleRun(ctx context.Context, msg jetstream.Msg) {
 		return
 	}
 
-	// ---- env layering ------------------------------------------------------
+	// ---- validate input JSON --------------------------------------------
+	schemaIn := filepath.Join(dir, "in.schema.json")
+	if err := sr.validateJSON(schemaIn, in.Input); err != nil {
+		evt := messages.NewScriptJobErrorEvent(scriptName, "input schema violation: "+err.Error()).WithCorrelation(in.CorrelationID)
+		_ = sr.publisher.PublishEvent(ctx, evt)
+		_ = msg.Ack()
+		return
+	}
+
+	// ---- env layering ----------------------------------------------------
 	repoEnv, _ := godotenv.Read(filepath.Join(sr.rootDir, ".env"))
 	scriptEnv, _ := godotenv.Read(filepath.Join(dir, ".env"))
 	envMap := mergeEnv(repoEnv, scriptEnv, in.Env)
-	// -----------------------------------------------------------------------
 
 	scriptType := sr.detectScriptType(dir)
 	impl := sr.langs[scriptType]
@@ -262,11 +285,20 @@ func (sr *ScriptRunner) handleRun(ctx context.Context, msg jetstream.Msg) {
 		return
 	}
 
+	// write input to temp file for the script
+	inputPath := filepath.Join(dir, ".tmp_input.json")
+	if err := os.WriteFile(inputPath, in.Input, 0o644); err != nil {
+		evt := messages.NewScriptJobErrorEvent(scriptName, err.Error()).WithCorrelation(in.CorrelationID)
+		_ = sr.publisher.PublishEvent(ctx, evt)
+		_ = msg.Ack()
+		return
+	}
+
 	jobID := xid.New().String()
 	jobCtx, cancel := context.WithCancel(ctx)
 	sr.jobs.Store(jobID, jobState{cancel: cancel})
 
-	cmd := impl.Run(jobCtx, dir, in.Args, envMap)
+	cmd := impl.Run(jobCtx, dir, []string{inputPath}, envMap)
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
 
@@ -282,8 +314,8 @@ func (sr *ScriptRunner) handleRun(ctx context.Context, msg jetstream.Msg) {
 	evt := messages.NewScriptJobStartedEvent(scriptName, jobID, cmd.Process.Pid).WithCorrelation(in.CorrelationID)
 	_ = sr.publisher.PublishEvent(ctx, evt)
 
-	go sr.pumpOutput(jobCtx, stdout, scriptName, jobID, "stdout", in.CorrelationID)
-	go sr.pumpOutput(jobCtx, stderr, scriptName, jobID, "stderr", in.CorrelationID)
+	go sr.pumpOutput(jobCtx, stdout, dir, scriptName, jobID, "stdout", in.CorrelationID)
+	go sr.pumpOutput(jobCtx, stderr, dir, scriptName, jobID, "stderr", in.CorrelationID)
 	go sr.waitForExit(ctx, cmd, scriptName, jobID, cancel, in.CorrelationID)
 
 	_ = msg.Ack()
@@ -327,14 +359,28 @@ func (sr *ScriptRunner) waitForExit(ctx context.Context, cmd *exec.Cmd, scriptNa
 	sr.jobs.Delete(jobID)
 }
 
-// pumpOutput streams each line of stdout/stderr as events.
-func (sr *ScriptRunner) pumpOutput(ctx context.Context, r io.Reader, scriptName, jobID, stream, correlationID string) {
+// pumpOutput streams each line of stdout/stderr as events and handles ##DATA## lines.
+func (sr *ScriptRunner) pumpOutput(ctx context.Context, r io.Reader, dir, scriptName, jobID, stream, correlationID string) {
 	scanner := bufio.NewScanner(r)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 1024*1024)
 
 	for scanner.Scan() {
 		line := scanner.Text()
+
+		// Structured data line
+		if strings.HasPrefix(line, "##DATA##") {
+			payload := strings.TrimPrefix(line, "##DATA##")
+			if err := sr.validateJSON(filepath.Join(dir, "out.schema.json"), []byte(payload)); err != nil {
+				slog.Error("output schema violation", "script", scriptName, "job", jobID, "err", err)
+				continue
+			}
+			evt := messages.NewScriptJobDataEvent(scriptName, jobID, []byte(payload)).WithCorrelation(correlationID)
+			_ = sr.publisher.PublishEvent(ctx, evt)
+			continue
+		}
+
+		// Regular stdout/stderr line
 		evt := messages.NewScriptJobOutputEvent(scriptName, jobID, stream, line).WithCorrelation(correlationID)
 		_ = sr.publisher.PublishEvent(ctx, evt)
 
@@ -358,18 +404,64 @@ func (sr *ScriptRunner) stopAllJobs() {
 }
 
 // =============================================================================
-// Language adapters
+// JSON‑Schema helpers
+// =============================================================================
+
+func (sr *ScriptRunner) validateJSON(schemaPath string, data []byte) error {
+	compiled, err := jsonschema.Compile("file://" + schemaPath)
+	if err != nil {
+		return err
+	}
+	var v interface{}
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	return compiled.Validate(v)
+}
+
+// =============================================================================
+// Code‑generation: JSON‑Schema → TS / Python types
+// =============================================================================
+
+func (sr *ScriptRunner) codegenSchemas(ctx context.Context, dir, lang string) error {
+	inSchema := filepath.Join(dir, "in.schema.json")
+	outSchema := filepath.Join(dir, "out.schema.json")
+	typesDir := filepath.Join(dir, "types")
+	if err := os.MkdirAll(typesDir, 0o755); err != nil {
+		return err
+	}
+
+	switch lang {
+	case "typescript":
+		if err := runCmd(ctx, "npx", "json-schema-to-typescript", inSchema, "-o", filepath.Join(typesDir, "in.ts"), "--bannerComment", ""); err != nil {
+			return err
+		}
+		if err := runCmd(ctx, "npx", "json-schema-to-typescript", outSchema, "-o", filepath.Join(typesDir, "out.ts"), "--bannerComment", ""); err != nil {
+			return err
+		}
+	case "python":
+		if err := runCmd(ctx, "datamodel-codegen", "-i", inSchema, "-o", filepath.Join(typesDir, "in.py"), "--class-name", "Input"); err != nil {
+			return err
+		}
+		if err := runCmd(ctx, "datamodel-codegen", "-i", outSchema, "-o", filepath.Join(typesDir, "out.py"), "--class-name", "Output"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// =============================================================================
+// Language adapters – Python
 // =============================================================================
 
 type pythonImpl struct{}
 
 func (pythonImpl) Init(ctx context.Context, dir string) error {
-	cmd := exec.CommandContext(ctx, "uv", "init")
-	cmd.Dir = dir
-	return cmd.Run()
+	return runCmd(ctx, "uv", "init", dir)
 }
 
 func (pythonImpl) Run(ctx context.Context, dir string, args []string, env map[string]string) *exec.Cmd {
+	// args[0] is path to input JSON file
 	cmdStr := fmt.Sprintf("uv venv && uv pip install . && uv run main.py %s", strings.Join(args, " "))
 	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
 	cmd.Dir = dir
@@ -377,14 +469,14 @@ func (pythonImpl) Run(ctx context.Context, dir string, args []string, env map[st
 	return cmd
 }
 
-// ---------------------------------------------------------------------------
+// =============================================================================
+// Language adapters – TypeScript (bun)
+// =============================================================================
 
 type tsImpl struct{}
 
 func (tsImpl) Init(ctx context.Context, dir string) error {
-	cmd := exec.CommandContext(ctx, "bun", "init")
-	cmd.Dir = dir
-	return cmd.Run()
+	return runCmd(ctx, "bun", "init", "-y")
 }
 
 func (tsImpl) Run(ctx context.Context, dir string, args []string, env map[string]string) *exec.Cmd {
