@@ -14,6 +14,11 @@ import requests
 from tqdm import tqdm
 
 import duckdb
+from dotenv import load_dotenv
+
+# Load .env from script directory
+SCRIPT_DIR = Path(__file__).parent.resolve()
+load_dotenv(SCRIPT_DIR / ".env")
 
 # ---------------------------------------------------------------------
 # Config / Settings
@@ -48,7 +53,8 @@ DATASETS = {
     # Add more datasets or special rules as needed
 }
 
-DB_PATH = PROCESSED_DATA_DIR / "rcra" / "rcrainfo.duckdb"
+# DB path from .env or default
+DB_PATH = Path(os.getenv("DB_PATH", SCRIPT_DIR.parent.parent / "store" / "db" / "rcrainfo.duckdb"))
 
 # ---------------------------------------------------------------------
 # Logging

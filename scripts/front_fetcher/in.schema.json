@@ -1,0 +1,8 @@
+{
+  "title": "FrontFetcherInput",
+  "type": "object",
+  "properties": {
+    "limit": { "type": "integer", "default": 5 }
+  },
+  "required": []
+} 
