@@ -152,7 +152,16 @@ func LoadPresetHandler(js jetstream.JetStream) http.HandlerFunc {
 			http.Error(w, "internal error", 500)
 			return
 		}
-		info := SessionInfo{Subscriptions: subs}
+
+		// Get existing session info to preserve env vars
+		var info runtime.SessionInfo
+		if entry, err := kv.Get(r.Context(), sid); err == nil && entry != nil {
+			_ = json.Unmarshal(entry.Value(), &info)
+		}
+
+		// Update subscriptions while preserving env
+		info.Subscriptions = subs
+
 		data, _ := json.Marshal(info)
 		if _, err := kv.Put(r.Context(), sid, data); err != nil {
 			slog.Error("LoadPresetHandler: Failed to put KV", "sid", sid, "err", err)

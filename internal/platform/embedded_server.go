@@ -73,7 +73,9 @@ func RunEmbeddedServer(ctx context.Context, cfg EmbeddedServerConfig) (*nats.Con
 	errCh := make(chan error, 1)
 	go func() {
 		<-ctx.Done()
-		ns.Shutdown()
+		// Context cancellation is handled by the caller (e.g., via a deferred ns.Shutdown()).
+		// Avoid shutting down the server twice, which can cause panics in the NATS
+		// server when internal channels are closed more than once.
 		errCh <- ctx.Err()
 	}()
 

@@ -131,7 +131,9 @@ templ Index() {
 
         <!-- right sidebar -->
         <aside id="right-panel" data-show="$rightOpen">
-            <div id="right-panel-content"></div>
+            <div id="right-panel-content">
+                @components.Terminal()
+            </div>
         </aside>
 
         <!-- horizontal handle -->
@@ -157,7 +159,7 @@ templ Index() {
         <!-- bottom panel -->
         <main id="bottom-panel" data-show="$bottomOpen">
             <div id="bottom-panel-content">
-                @components.Terminal()
+                <!-- Terminal component was here, now moved to right-panel-content -->
             </div>
         </main>
     </body>

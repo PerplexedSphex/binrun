@@ -408,7 +408,11 @@ func (sr *ScriptRunner) stopAllJobs() {
 // =============================================================================
 
 func (sr *ScriptRunner) validateJSON(schemaPath string, data []byte) error {
-	compiled, err := jsonschema.Compile("file://" + schemaPath)
+	absSchemaPath, err := filepath.Abs(schemaPath)
+	if err != nil {
+		return fmt.Errorf("could not get absolute path for schema '%s': %w", schemaPath, err)
+	}
+	compiled, err := jsonschema.Compile("file://" + absSchemaPath)
 	if err != nil {
 		return err
 	}

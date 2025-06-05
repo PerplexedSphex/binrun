@@ -11,7 +11,7 @@ templ Terminal() {
 
 // Render a new prompt line with given ID
 templ TerminalPrompt() {
-    <div class="term-line" id="live-prompt" data-scroll-into-view>
+    <div class="term-line" id="live-prompt" data-scroll-into-view__instant__vend__hcenter>
         <span class="prompt">&gt; </span>
         <form class="term-form"
               data-on-submit="@post('/terminal', {contentType: 'form'})">
