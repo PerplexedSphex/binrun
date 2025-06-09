@@ -1,19 +1,19 @@
 package main
 
 import (
+	"binrun/internal/platform"
 	"context"
 	"log/slog"
 	"os"
 	"os/signal"
-
-	"binrun/internal/platform"
+	"syscall"
 )
 
 func main() {
 	platform.InitMetrics()
 	platform.InitLogger()
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	appCfg := platform.LoadAppConfig()

@@ -281,13 +281,16 @@ def main():
     inp = json.loads(input_path.read_text())
     # inp = {"dataset": ..., "skip_download": ...}
 
-    # TODO: Replace below with actual logic using inp fields
-    print(f"Loaded input: {inp}")
-    # ... rest of your ETL logic ...
+    dataset = inp.get("dataset")
+    skip_download = inp.get("skip_download", False)
 
-    # If you later add out.schema.json, emit a structured result like:
-    # result = {"summary": "..."}
-    # print("##DATA##" + json.dumps(result))
+    try:
+        run_etl(dataset, skip_download=skip_download)
+        result = {"status": "success", "dataset": dataset, "skip_download": skip_download}
+    except Exception as e:
+        result = {"status": "error", "error": str(e), "dataset": dataset}
+
+    print("##DATA##" + json.dumps(result))
 
 if __name__ == "__main__":
     main()

@@ -63,6 +63,7 @@ tasks:
 
   codegen:
     desc: "Generate TS & Python types from scripts/**/in|out.schema.json"
+    method: checksum
     sources:
       - "scripts/**/in.schema.json"
       - "scripts/**/out.schema.json"
@@ -89,7 +90,7 @@ tasks:
   # --- Build helpers ---------------------------------------------------------
   build:
     desc: "Build dev binary to {{.BIN_DIR}}/{{.BIN_NAME}}"
-    deps: [codegen, templ, fmt, tidy]
+    deps: [templ, fmt, tidy]
     cmds:
       - mkdir -p {{.BIN_DIR}}
       - go build -o {{.BIN_DIR}}/{{.BIN_NAME}} ./cmd/{{.APP_NAME}}
@@ -111,7 +112,7 @@ tasks:
       - "**/*.go"
       - "**/*.templ"
       - "**/*.css"
-      - "scripts/**/*.schema.json"   # watch schemas too
+      # - "scripts/**/*.schema.json"   # watch schemas too
     deps: [kill, build]
     cmds:
       - "{{.BIN_DIR}}/{{.BIN_NAME}}"

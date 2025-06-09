@@ -1,6 +1,7 @@
 # etl.py
 
-import argparse
+import sys
+import json
 import logging
 import os
 from pathlib import Path
@@ -13,12 +14,17 @@ import requests
 from tqdm import tqdm
 
 import duckdb
+from dotenv import load_dotenv
+
+# Load .env from script directory
+SCRIPT_DIR = Path(__file__).parent.resolve()
+load_dotenv(SCRIPT_DIR / ".env")
 
 # ---------------------------------------------------------------------
 # Config / Settings
 # (Replace these with whatever config system you actually use)
 # ---------------------------------------------------------------------
-DATA_ROOT = Path("data")
+DATA_ROOT = Path.cwd() / "data"
 RAW_DATA_DIR = DATA_ROOT / "raw"
 PROCESSED_DATA_DIR = DATA_ROOT / "processed"
 
@@ -47,7 +53,8 @@ DATASETS = {
     # Add more datasets or special rules as needed
 }
 
-DB_PATH = PROCESSED_DATA_DIR / "rcra" / "rcrainfo.duckdb"
+# DB path from .env or default
+DB_PATH = Path(os.getenv("DB_PATH", SCRIPT_DIR.parent.parent / "store" / "db" / "rcrainfo.duckdb"))
 
 # ---------------------------------------------------------------------
 # Logging
@@ -64,12 +71,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------
 def get_latest_monday_date() -> str:
     """
-    Get the most recent Monday's date in the format: YYYY-MM-DDTHH-MM-SS-0500
-    Example: '2025-01-27T03-00-00-0500'
+    Get the most recent Monday's date in the format: YYYY-MM-DDTHH-MM-SS-0400
+    Example: '2025-01-27T03-00-00-0400'
     """
     today = datetime.now()
     monday = today - timedelta(days=today.weekday())  # go back to Monday
-    return monday.strftime("%Y-%m-%dT03-00-00-0500")
+    return monday.strftime("%Y-%m-%dT03-00-00-0400")
 
 
 def download_file(url: str, output_path: Path, chunk_size: int = 8192) -> Path:
@@ -269,21 +276,21 @@ def run_etl(dataset_key: str, skip_download: bool = False) -> None:
 # Optional CLI
 # ---------------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(description="Run ETL pipelines for EPA data")
-    parser.add_argument(
-        "dataset",
-        choices=list(DATASETS.keys()),
-        help="Which dataset to run the ETL for"
-    )
-    parser.add_argument(
-        "--skip-download",
-        action="store_true",
-        help="Skip downloading data, only run the loading into DuckDB"
-    )
-    args = parser.parse_args()
+    # Load input JSON
+    input_path = Path(sys.argv[1])
+    inp = json.loads(input_path.read_text())
+    # inp = {"dataset": ..., "skip_download": ...}
 
-    run_etl(args.dataset, skip_download=args.skip_download)
+    dataset = inp.get("dataset")
+    skip_download = inp.get("skip_download", False)
 
+    try:
+        run_etl(dataset, skip_download=skip_download)
+        result = {"status": "success", "dataset": dataset, "skip_download": skip_download}
+    except Exception as e:
+        result = {"status": "error", "error": str(e), "dataset": dataset}
+
+    print("##DATA##" + json.dumps(result))
 
 if __name__ == "__main__":
     main()
