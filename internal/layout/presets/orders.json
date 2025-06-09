@@ -1,0 +1,8 @@
+{
+  "id": "ordersubs",
+  "help": "Order and invoice events",
+  "subscriptions": [
+    "event.orders.*",
+    "event.invoice.created"
+  ]
+} 

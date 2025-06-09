@@ -11,6 +11,7 @@ import (
 
 	"slices"
 
+	layoutpkg "binrun/internal/layout"
 	"binrun/internal/messages"
 
 	"github.com/nats-io/nats.go/jetstream"
@@ -563,19 +564,23 @@ func (te *TerminalEngine) handleEnvCommand(ctx context.Context, sid, cmd string,
 		key := envStr[:eqIdx]
 		value := envStr[eqIdx+1:]
 
-		// Get current session data
-		var info SessionInfo
-		if entry, err := kv.Get(ctx, sid); err == nil && entry != nil {
-			_ = json.Unmarshal(entry.Value(), &info)
+		// Load session state to preserve subscriptions and layout
+		entry, err := kv.Get(ctx, sid)
+		state := layoutpkg.SessionState{}
+		if err == nil && entry != nil {
+			st, err2 := layoutpkg.LoadSessionData(entry.Value())
+			if err2 == nil {
+				state = st
+			}
 		}
-		if info.Env == nil {
-			info.Env = make(map[string]string)
+		if state.Env == nil {
+			state.Env = make(map[string]string)
 		}
-		info.Env[key] = value
-
+		state.Env[key] = value
 		// Save back
-		data, _ := json.Marshal(info)
-		if _, err := kv.Put(ctx, sid, data); err != nil {
+		dataObj, _ := state.Raw()
+		raw, _ := json.Marshal(dataObj)
+		if _, err := kv.Put(ctx, sid, raw); err != nil {
 			return "error: failed to save env var", true
 		}
 		return fmt.Sprintf("set %s=%s", key, value), true
@@ -593,16 +598,20 @@ func (te *TerminalEngine) handleEnvCommand(ctx context.Context, sid, cmd string,
 		return "session environment:\n  " + strings.Join(lines, "\n  "), true
 
 	case "clear":
-		// Get current session data
-		var info SessionInfo
-		if entry, err := kv.Get(ctx, sid); err == nil && entry != nil {
-			_ = json.Unmarshal(entry.Value(), &info)
+		// Load session state
+		entry, err := kv.Get(ctx, sid)
+		state := layoutpkg.SessionState{}
+		if err == nil && entry != nil {
+			st, err2 := layoutpkg.LoadSessionData(entry.Value())
+			if err2 == nil {
+				state = st
+			}
 		}
-		info.Env = nil
-
+		state.Env = nil
 		// Save back
-		data, _ := json.Marshal(info)
-		if _, err := kv.Put(ctx, sid, data); err != nil {
+		dataObj, _ := state.Raw()
+		raw, _ := json.Marshal(dataObj)
+		if _, err := kv.Put(ctx, sid, raw); err != nil {
 			return "error: failed to clear env vars", true
 		}
 		return "cleared all session environment variables", true
@@ -614,22 +623,22 @@ func (te *TerminalEngine) handleEnvCommand(ctx context.Context, sid, cmd string,
 
 // getSessionEnv retrieves environment variables for a session
 func (te *TerminalEngine) getSessionEnv(ctx context.Context, sid string) map[string]string {
+	// Access sessions KV
 	kv, err := te.js.KeyValue(ctx, "sessions")
 	if err != nil {
 		return nil
 	}
-
-	var info SessionInfo
-	if entry, err := kv.Get(ctx, sid); err == nil && entry != nil {
-		_ = json.Unmarshal(entry.Value(), &info)
+	// Fetch session data
+	entry, err := kv.Get(ctx, sid)
+	if err != nil || entry == nil {
+		return nil
 	}
-	return info.Env
-}
-
-// SessionInfo extends the basic subscription list with env vars
-type SessionInfo struct {
-	Subscriptions []string          `json:"subscriptions"`
-	Env           map[string]string `json:"env,omitempty"`
+	// Load unified session state
+	state, err := layoutpkg.LoadSessionData(entry.Value())
+	if err != nil {
+		return nil
+	}
+	return state.Env
 }
 
 // ensureSessionSubscribed adds a subject to the session if not already present
@@ -639,17 +648,22 @@ func (te *TerminalEngine) ensureSessionSubscribed(ctx context.Context, sid, subj
 		return
 	}
 
-	var info SessionInfo
-	if entry, err := kv.Get(ctx, sid); err == nil && entry != nil {
-		_ = json.Unmarshal(entry.Value(), &info)
-	}
-
-	if !slices.Contains(info.Subscriptions, subject) {
-		info.Subscriptions = append(info.Subscriptions, subject)
-		slices.Sort(info.Subscriptions)
-		if data, err := json.Marshal(info); err == nil {
-			_, _ = kv.Put(ctx, sid, data)
+	// Load session state
+	entry, err := kv.Get(ctx, sid)
+	state := layoutpkg.SessionState{}
+	if err == nil && entry != nil {
+		st, err2 := layoutpkg.LoadSessionData(entry.Value())
+		if err2 == nil {
+			state = st
 		}
+	}
+	// Add subscription if missing
+	if !slices.Contains(state.Subscriptions, subject) {
+		state.Subscriptions = append(state.Subscriptions, subject)
+		slices.Sort(state.Subscriptions)
+		dataObj, _ := state.Raw()
+		raw, _ := json.Marshal(dataObj)
+		_, _ = kv.Put(ctx, sid, raw)
 	}
 }
 
@@ -750,8 +764,8 @@ func (te *TerminalEngine) handlePresetCommand(ctx context.Context, sid string, c
 	case "ls":
 		// ls presets OR ls preset <id>
 		if len(parts) >= 2 && parts[1] == "presets" {
-			keys := make([]string, 0, len(Presets))
-			for k := range Presets {
+			keys := make([]string, 0, len(layoutpkg.Presets))
+			for k := range layoutpkg.Presets {
 				keys = append(keys, k)
 			}
 			slices.Sort(keys)
@@ -779,7 +793,7 @@ func (te *TerminalEngine) handlePresetCommand(ctx context.Context, sid string, c
 		}
 		if len(parts) >= 3 && parts[1] == "preset" {
 			key := parts[2]
-			p, ok := Presets[key]
+			p, ok := layoutpkg.Presets[key]
 			if !ok {
 				return "unknown preset", true
 			}
@@ -791,7 +805,7 @@ func (te *TerminalEngine) handlePresetCommand(ctx context.Context, sid string, c
 			return "usage: load <presetID> [--key value ...]", true
 		}
 		key := parts[1]
-		p, ok := Presets[key]
+		p, ok := layoutpkg.Presets[key]
 		if !ok {
 			return "unknown preset", true
 		}
@@ -810,9 +824,24 @@ func (te *TerminalEngine) handlePresetCommand(ctx context.Context, sid string, c
 		if err != nil {
 			return "kv error", true
 		}
-		info := SessionInfo{Subscriptions: subs}
-		data, _ := json.Marshal(info)
-		if _, err := kv.Put(ctx, sid, data); err != nil {
+		// Load existing session state
+		entry, err := kv.Get(ctx, sid)
+		state := layoutpkg.SessionState{}
+		if err == nil && entry != nil {
+			st, err2 := layoutpkg.LoadSessionData(entry.Value())
+			if err2 == nil {
+				state = st
+			}
+		}
+		// Update subscriptions
+		state.Subscriptions = subs
+		// Update commands
+		state.Commands = p.BuildCommands(flagArgs)
+		state.Layout, _ = p.BuildLayout(flagArgs)
+		// Save back
+		dataObj, _ := state.Raw()
+		raw, _ := json.Marshal(dataObj)
+		if _, err := kv.Put(ctx, sid, raw); err != nil {
 			slog.Warn("terminal: preset kv put", "err", err)
 			return "failed to load preset", true
 		}

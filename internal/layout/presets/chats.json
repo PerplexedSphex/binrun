@@ -1,0 +1,8 @@
+{
+  "id": "chatsubs",
+  "help": "Chat events",
+  "subscriptions": [
+    "event.chat.*",
+    "event.script.>"
+  ]
+} 

@@ -8,8 +8,8 @@ import (
 	"slices"
 	"strings"
 
+	"binrun/internal/layout"
 	"binrun/internal/messages"
-	"binrun/internal/runtime"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/nats-io/nats.go"
@@ -122,7 +122,7 @@ func LoadPresetHandler(js jetstream.JetStream) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		presetID := chi.URLParam(r, "preset")
 
-		preset, ok := runtime.Presets[presetID]
+		preset, ok := layout.Presets[presetID]
 		if !ok {
 			http.Error(w, "unknown preset", http.StatusNotFound)
 			return
@@ -153,17 +153,31 @@ func LoadPresetHandler(js jetstream.JetStream) http.HandlerFunc {
 			return
 		}
 
-		// Get existing session info to preserve env vars
-		var info runtime.SessionInfo
-		if entry, err := kv.Get(r.Context(), sid); err == nil && entry != nil {
-			_ = json.Unmarshal(entry.Value(), &info)
+		// Load existing session state to preserve env and layout
+		entry, err := kv.Get(r.Context(), sid)
+		var state layout.SessionState
+		if err == nil && entry != nil {
+			st, err2 := layout.LoadSessionData(entry.Value())
+			if err2 == nil {
+				state = st
+			}
 		}
-
-		// Update subscriptions while preserving env
-		info.Subscriptions = subs
-
-		data, _ := json.Marshal(info)
-		if _, err := kv.Put(r.Context(), sid, data); err != nil {
+		// Update subscriptions
+		state.Subscriptions = subs
+		// Update commands
+		state.Commands = preset.BuildCommands(args)
+		// Update layout
+		builtLayout, err2 := preset.BuildLayout(args)
+		if err2 != nil {
+			slog.Error("LoadPresetHandler: failed to build layout", "preset", presetID, "err", err2)
+			http.Error(w, err2.Error(), http.StatusInternalServerError)
+			return
+		}
+		state.Layout = builtLayout
+		// Serialize and put
+		dataObj, _ := state.Raw()
+		raw, _ := json.Marshal(dataObj)
+		if _, err := kv.Put(r.Context(), sid, raw); err != nil {
 			slog.Error("LoadPresetHandler: Failed to put KV", "sid", sid, "err", err)
 			http.Error(w, err.Error(), 500)
 			return

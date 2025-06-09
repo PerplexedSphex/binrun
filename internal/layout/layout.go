@@ -1,4 +1,4 @@
-package platform
+package layout
 
 import (
 	"encoding/json"
@@ -6,6 +6,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	components "binrun/ui/components"
+
+	templ "github.com/a-h/templ"
+	datastar "github.com/starfederation/datastar/sdk/go"
 )
 
 // LayoutNode represents a node in the layout tree.
@@ -248,4 +253,39 @@ func (p *PanelLayout) GetSubscriptions() []string {
 		subs = append(subs, node.GetSubscriptions()...)
 	}
 	return subs
+}
+
+// RenderFragment defines a UI component to render into a selector via SSE.
+type RenderFragment struct {
+	Component  templ.Component
+	SelectorID string
+	Options    []datastar.MergeFragmentOption
+}
+
+// LayoutFragments computes the list of RenderFragments for the given layout and subscriptions.
+// It generates panel-specific LayoutTree fragments or a fallback grid fragment.
+func LayoutFragments(layout *PanelLayout, subs []string) []RenderFragment {
+	var frags []RenderFragment
+	if layout != nil {
+		compLayout := ConvertToComponents(layout)
+		for _, pn := range []string{"left", "main", "right"} {
+			if _, ok := compLayout.Panels[pn]; !ok {
+				continue
+			}
+			tree := components.LayoutTree(compLayout, pn)
+			frags = append(frags, RenderFragment{
+				Component:  tree,
+				SelectorID: pn + "-panel-content",
+				Options:    nil,
+			})
+		}
+	} else {
+		grid := components.SubscriptionsGrid(subs)
+		frags = append(frags, RenderFragment{
+			Component:  grid,
+			SelectorID: "main-panel-content",
+			Options:    nil,
+		})
+	}
+	return frags
 }
