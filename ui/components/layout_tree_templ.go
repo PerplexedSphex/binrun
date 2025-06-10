@@ -6,57 +6,15 @@ package components
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
 import (
-	"fmt"
-
 	"github.com/a-h/templ"
 	templruntime "github.com/a-h/templ/runtime"
+
+	layout "binrun/internal/layout"
+	"fmt"
 )
 
-// LayoutNode mirrors platform.LayoutNode to avoid import cycle
-type LayoutNode struct {
-	// For leaf nodes
-	Subscription string `json:"subscription,omitempty"`
-
-	// For command nodes
-	Command  string         `json:"command,omitempty"`
-	Script   string         `json:"script,omitempty"`
-	Defaults map[string]any `json:"defaults,omitempty"`
-
-	// For binary splits
-	Split  string      `json:"split,omitempty"`
-	At     string      `json:"at,omitempty"`
-	First  *LayoutNode `json:"first,omitempty"`
-	Second *LayoutNode `json:"second,omitempty"`
-
-	// For even splits
-	Direction string        `json:"direction,omitempty"`
-	Items     []*LayoutNode `json:"items,omitempty"`
-}
-
-// PanelLayout mirrors platform.PanelLayout
-type PanelLayout struct {
-	Panels map[string]*LayoutNode `json:"panels"`
-}
-
-// NodeType returns the type of this layout node
-func (n *LayoutNode) NodeType() string {
-	if n.Subscription != "" {
-		return "leaf"
-	}
-	if n.Command != "" {
-		return "command"
-	}
-	if n.Split == "horizontal" || n.Split == "vertical" {
-		return "binary"
-	}
-	if len(n.Split) > 5 && n.Split[:5] == "even-" {
-		return "even"
-	}
-	return "unknown"
-}
-
 // LayoutTree renders the entire panel layout
-func LayoutTree(layout *PanelLayout, panelName string) templ.Component {
+func LayoutTree(layout *layout.PanelLayout, panelName string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -85,7 +43,7 @@ func LayoutTree(layout *PanelLayout, panelName string) templ.Component {
 			var templ_7745c5c3_Var2 string
 			templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(panelName + "-panel-content")
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/layout_tree.templ`, Line: 54, Col: 39}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/layout_tree.templ`, Line: 12, Col: 39}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 			if templ_7745c5c3_Err != nil {
@@ -103,7 +61,7 @@ func LayoutTree(layout *PanelLayout, panelName string) templ.Component {
 			var templ_7745c5c3_Var3 string
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(panelName + "-panel-content")
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/layout_tree.templ`, Line: 56, Col: 39}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/layout_tree.templ`, Line: 14, Col: 39}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 			if templ_7745c5c3_Err != nil {
@@ -129,7 +87,7 @@ func LayoutTree(layout *PanelLayout, panelName string) templ.Component {
 			var templ_7745c5c3_Var4 string
 			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(panelName + "-panel-content")
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/layout_tree.templ`, Line: 61, Col: 39}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/layout_tree.templ`, Line: 19, Col: 39}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 			if templ_7745c5c3_Err != nil {
@@ -145,7 +103,7 @@ func LayoutTree(layout *PanelLayout, panelName string) templ.Component {
 }
 
 // renderLayoutNode recursively renders a layout node
-func renderLayoutNode(node *LayoutNode, panelName string, path string) templ.Component {
+func renderLayoutNode(node *layout.LayoutNode, panelName string, path string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -167,6 +125,11 @@ func renderLayoutNode(node *LayoutNode, panelName string, path string) templ.Com
 		}
 		ctx = templ.ClearChildren(ctx)
 		switch node.NodeType() {
+		case "document":
+			templ_7745c5c3_Err = renderDocumentNode(node, panelName, path).Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
 		case "leaf":
 			templ_7745c5c3_Err = renderLeafNode(node, panelName, path).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
@@ -187,13 +150,18 @@ func renderLayoutNode(node *LayoutNode, panelName string, path string) templ.Com
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
+		case "component":
+			templ_7745c5c3_Err = renderComponentNode(node, panelName, path).Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
 		}
 		return nil
 	})
 }
 
 // renderLeafNode renders a subscription container
-func renderLeafNode(node *LayoutNode, panelName string, path string) templ.Component {
+func renderLeafNode(node *layout.LayoutNode, panelName string, path string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -221,7 +189,7 @@ func renderLeafNode(node *LayoutNode, panelName string, path string) templ.Compo
 		var templ_7745c5c3_Var7 string
 		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(path)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/layout_tree.templ`, Line: 81, Col: 41}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/layout_tree.templ`, Line: 43, Col: 41}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 		if templ_7745c5c3_Err != nil {
@@ -244,7 +212,7 @@ func renderLeafNode(node *LayoutNode, panelName string, path string) templ.Compo
 }
 
 // renderCommandNode renders a command form
-func renderCommandNode(node *LayoutNode, panelName string, path string) templ.Component {
+func renderCommandNode(node *layout.LayoutNode, panelName string, path string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -272,7 +240,7 @@ func renderCommandNode(node *LayoutNode, panelName string, path string) templ.Co
 		var templ_7745c5c3_Var9 string
 		templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(path)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/layout_tree.templ`, Line: 88, Col: 44}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/layout_tree.templ`, Line: 50, Col: 44}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 		if templ_7745c5c3_Err != nil {
@@ -295,7 +263,7 @@ func renderCommandNode(node *LayoutNode, panelName string, path string) templ.Co
 }
 
 // renderBinaryNode renders a binary split
-func renderBinaryNode(node *LayoutNode, panelName string, path string) templ.Component {
+func renderBinaryNode(node *layout.LayoutNode, panelName string, path string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -341,7 +309,7 @@ func renderBinaryNode(node *LayoutNode, panelName string, path string) templ.Com
 		var templ_7745c5c3_Var13 string
 		templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(path)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/layout_tree.templ`, Line: 97, Col: 17}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/layout_tree.templ`, Line: 59, Col: 17}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 		if templ_7745c5c3_Err != nil {
@@ -354,7 +322,7 @@ func renderBinaryNode(node *LayoutNode, panelName string, path string) templ.Com
 		var templ_7745c5c3_Var14 string
 		templ_7745c5c3_Var14, templ_7745c5c3_Err = templruntime.SanitizeStyleAttributeValues(getBinarySplitStyle(node))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/layout_tree.templ`, Line: 98, Col: 34}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/layout_tree.templ`, Line: 60, Col: 34}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 		if templ_7745c5c3_Err != nil {
@@ -385,7 +353,7 @@ func renderBinaryNode(node *LayoutNode, panelName string, path string) templ.Com
 }
 
 // renderEvenNode renders an even split
-func renderEvenNode(node *LayoutNode, panelName string, path string) templ.Component {
+func renderEvenNode(node *layout.LayoutNode, panelName string, path string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -431,7 +399,7 @@ func renderEvenNode(node *LayoutNode, panelName string, path string) templ.Compo
 		var templ_7745c5c3_Var18 string
 		templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(path)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/layout_tree.templ`, Line: 113, Col: 17}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/layout_tree.templ`, Line: 75, Col: 17}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 		if templ_7745c5c3_Err != nil {
@@ -444,7 +412,7 @@ func renderEvenNode(node *LayoutNode, panelName string, path string) templ.Compo
 		var templ_7745c5c3_Var19 string
 		templ_7745c5c3_Var19, templ_7745c5c3_Err = templruntime.SanitizeStyleAttributeValues(getEvenSplitStyle(node))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/layout_tree.templ`, Line: 114, Col: 32}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/layout_tree.templ`, Line: 76, Col: 32}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 		if templ_7745c5c3_Err != nil {
@@ -476,9 +444,90 @@ func renderEvenNode(node *LayoutNode, panelName string, path string) templ.Compo
 	})
 }
 
+// renderComponentNode renders a built-in component such as the terminal
+func renderComponentNode(node *layout.LayoutNode, panelName string, path string) templ.Component {
+	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
+		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
+		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
+			return templ_7745c5c3_CtxErr
+		}
+		templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
+		if !templ_7745c5c3_IsBuffer {
+			defer func() {
+				templ_7745c5c3_BufErr := templruntime.ReleaseBuffer(templ_7745c5c3_Buffer)
+				if templ_7745c5c3_Err == nil {
+					templ_7745c5c3_Err = templ_7745c5c3_BufErr
+				}
+			}()
+		}
+		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Var20 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var20 == nil {
+			templ_7745c5c3_Var20 = templ.NopComponent
+		}
+		ctx = templ.ClearChildren(ctx)
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "<div class=\"layout-component\" data-path=\"")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var21 string
+		templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(path)
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/layout_tree.templ`, Line: 88, Col: 46}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "\">")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = Terminal().Render(ctx, templ_7745c5c3_Buffer)
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "</div>")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		return nil
+	})
+}
+
+// renderDocumentNode renders a document viewer with provided paths
+func renderDocumentNode(node *layout.LayoutNode, panelName string, path string) templ.Component {
+	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
+		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
+		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
+			return templ_7745c5c3_CtxErr
+		}
+		templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
+		if !templ_7745c5c3_IsBuffer {
+			defer func() {
+				templ_7745c5c3_BufErr := templruntime.ReleaseBuffer(templ_7745c5c3_Buffer)
+				if templ_7745c5c3_Err == nil {
+					templ_7745c5c3_Err = templ_7745c5c3_BufErr
+				}
+			}()
+		}
+		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Var22 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var22 == nil {
+			templ_7745c5c3_Var22 = templ.NopComponent
+		}
+		ctx = templ.ClearChildren(ctx)
+		templ_7745c5c3_Err = DocMarkdown(node.DocumentPaths).Render(ctx, templ_7745c5c3_Buffer)
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		return nil
+	})
+}
+
 // Helper functions for generating CSS styles
 
-func getBinarySplitStyle(node *LayoutNode) string {
+func getBinarySplitStyle(node *layout.LayoutNode) string {
 	if node.Split == "horizontal" {
 		// horizontal = top/bottom split
 		switch node.At {
@@ -510,7 +559,7 @@ func getBinarySplitStyle(node *LayoutNode) string {
 	}
 }
 
-func getEvenSplitStyle(node *LayoutNode) string {
+func getEvenSplitStyle(node *layout.LayoutNode) string {
 	count := len(node.Items)
 	if node.Direction == "horizontal" {
 		// horizontal = row of items

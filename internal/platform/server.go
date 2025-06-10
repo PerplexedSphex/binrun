@@ -80,9 +80,6 @@ func RunHTTPServer(ctx context.Context, nc *nats.Conn, cfg HTTPServerConfig) <-c
 	r.Get("/health", Health)
 	r.Post("/command", SendCommand(nc, js))
 
-	// Terminal endpoint
-	r.Post("/terminal", TerminalCommandHandler(js))
-
 	// UI root route using Templ
 	r.Get("/", templ.Handler(ui.Index()).ServeHTTP)
 

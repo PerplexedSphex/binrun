@@ -92,30 +92,68 @@ func (p Preset) BuildCommands(args map[string]string) []CommandDescriptor {
 	return out
 }
 
-// BuildLayout applies args to the preset's Layout structure, substituting placeholders
+// BuildLayout applies args to the preset's Layout structure in a type-safe manner
 // and returns a concrete PanelLayout or nil if none defined.
 func (p Preset) BuildLayout(args map[string]string) (*PanelLayout, error) {
 	if p.Layout == nil {
 		return nil, nil
 	}
-	// Marshal the template layout to JSON
-	data, err := json.Marshal(p.Layout)
-	if err != nil {
-		return nil, fmt.Errorf("marshal preset layout: %w", err)
-	}
-	s := string(data)
-	// Substitute each param
-	for _, param := range p.Params {
-		val := args[param]
-		if val == "" {
-			val = "*"
+	// Helper to substitute placeholders in strings
+	substitute := func(s string) string {
+		for _, param := range p.Params {
+			val := args[param]
+			if val == "" {
+				val = "*"
+			}
+			s = strings.ReplaceAll(s, "{"+param+"}", val)
 		}
-		s = strings.ReplaceAll(s, "{"+param+"}", val)
+		return s
 	}
-	// Unmarshal into PanelLayout
-	var out PanelLayout
-	if err := json.Unmarshal([]byte(s), &out); err != nil {
-		return nil, fmt.Errorf("unmarshal built layout: %w", err)
+	// Copy and substitute defaults map
+	copyDefaults := func(orig map[string]any) map[string]any {
+		if orig == nil {
+			return nil
+		}
+		dst := make(map[string]any, len(orig))
+		for k, v := range orig {
+			if str, ok := v.(string); ok {
+				dst[k] = substitute(str)
+			} else {
+				dst[k] = v
+			}
+		}
+		return dst
 	}
-	return &out, nil
+	// Recursive builder for LayoutNode
+	var buildNode func(src *LayoutNode) *LayoutNode
+	buildNode = func(src *LayoutNode) *LayoutNode {
+		if src == nil {
+			return nil
+		}
+		dst := &LayoutNode{
+			Subscription: substitute(src.Subscription),
+			Component:    substitute(src.Component),
+			Command:      substitute(src.Command),
+			Script:       substitute(src.Script),
+			Defaults:     copyDefaults(src.Defaults),
+			Split:        src.Split,
+			At:           src.At,
+			Direction:    src.Direction,
+		}
+		dst.First = buildNode(src.First)
+		dst.Second = buildNode(src.Second)
+		if src.Items != nil {
+			dst.Items = make([]*LayoutNode, len(src.Items))
+			for i, item := range src.Items {
+				dst.Items[i] = buildNode(item)
+			}
+		}
+		return dst
+	}
+	// Build final PanelLayout
+	out := &PanelLayout{Panels: make(map[string]*LayoutNode, len(p.Layout.Panels))}
+	for name, node := range p.Layout.Panels {
+		out.Panels[name] = buildNode(node)
+	}
+	return out, nil
 }

@@ -6,11 +6,10 @@ import (
 	"log/slog"
 	"net/http"
 
-	"binrun/internal/messages"
-	components "binrun/ui/components"
-
 	layoutpkg "binrun/internal/layout"
 	runtime "binrun/internal/runtime"
+
+	components "binrun/ui/components"
 
 	"github.com/nats-io/nats.go/jetstream"
 	datastar "github.com/starfederation/datastar/sdk/go"
@@ -29,10 +28,21 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 		// --- Get session subscriptions, ensuring terminal sub exists in KV ---
 		entry, err := kv.Get(ctx, sid)
 		if err != nil {
-			// No session data: initialize default
-			slog.Info("UIStream: No session KV found, creating default", "sid", sid)
-			termSubj := messages.TerminalFreezeSubject(sid)
-			dataObj := layoutpkg.SessionData{Subscriptions: []string{termSubj}}
+			// No session data: load default preset
+			slog.Info("UIStream: No session KV found, loading default preset", "sid", sid)
+			preset, ok := layoutpkg.Presets["default"]
+			var built *layoutpkg.PanelLayout
+			if ok {
+				built, err = preset.BuildLayout(nil)
+				if err != nil {
+					slog.Error("UIStream: failed to build default preset layout", "err", err)
+					http.Error(w, "internal error", 500)
+					return
+				}
+			}
+			// Persist default state
+			state := layoutpkg.SessionState{Env: nil, Layout: built}
+			dataObj, _ := state.Raw()
 			raw, _ := json.Marshal(dataObj)
 			if _, putErr := kv.Put(ctx, sid, raw); putErr != nil {
 				slog.Error("UIStream: Failed to put default session KV", "sid", sid, "err", putErr)
@@ -52,9 +62,9 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 			http.Error(w, "invalid session info", 500)
 			return
 		}
-		// Use typed state
-		subs := sess.Subscriptions
+		// Use typed state; derive subscriptions from layout
 		layoutTree := sess.Layout
+		subs := layoutTree.GetRequiredSubscriptions(sid)
 
 		if layoutTree != nil && layoutTree.Validate() != nil {
 			slog.Warn("Invalid layout in session", "sid", sid)
@@ -65,27 +75,24 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 			return
 		}
 
-		// Compute and render layout fragments
-		frags := layoutpkg.LayoutFragments(layoutTree, subs)
-		for _, frag := range frags {
-			_ = sse.MergeFragmentTempl(frag.Component,
-				datastar.WithSelectorID(frag.SelectorID),
+		// Render panels based on layout
+		if layoutTree != nil {
+			for _, pn := range []string{"left", "main", "right"} {
+				if node, ok := layoutTree.Panels[pn]; ok && node != nil {
+					tree := components.LayoutTree(layoutTree, pn)
+					_ = sse.MergeFragmentTempl(tree,
+						datastar.WithSelectorID(pn+"-panel-content"),
+					)
+				}
+			}
+		} else {
+			grid := components.SubscriptionsGrid(subs)
+			_ = sse.MergeFragmentTempl(grid,
+				datastar.WithSelectorID("main-panel-content"),
 			)
 		}
-		// Clear existing command forms and render new ones
-		_ = sse.MergeFragments("",
-			datastar.WithSelectorID("left-panel-content"),
-			datastar.WithMergeMode(datastar.FragmentMergeModeInner),
-		)
-		if len(sess.Commands) > 0 {
-			for _, cd := range sess.Commands {
-				frag := components.CommandForm(cd.Type, cd.Script, cd.Defaults)
-				_ = sse.MergeFragmentTempl(frag,
-					datastar.WithSelectorID("left-panel-content"),
-					datastar.WithMergeAppend(),
-				)
-			}
-		}
+
+		// (Commands are rendered via declarative layout; no manual command merging)
 
 		// --- Setup for watcher ---
 		consumerCancel := func() {}
@@ -156,8 +163,8 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 					slog.Warn("Invalid session update", "sid", sid, "err", err)
 					continue
 				}
-				newSubs := newState.Subscriptions
 				newLayout := newState.Layout
+				newSubs := newLayout.GetRequiredSubscriptions(sid)
 
 				// Compare sorted lists
 				subsChanged := len(newSubs) != len(currentSubs)
@@ -171,32 +178,24 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 				}
 
 				if subsChanged {
-					// Compute and render layout fragments
-					frags := layoutpkg.LayoutFragments(newLayout, newSubs)
-					for _, frag := range frags {
-						_ = sse.MergeFragmentTempl(frag.Component,
-							datastar.WithSelectorID(frag.SelectorID),
+					// Render panels based on layout
+					if newLayout != nil {
+						for _, pn := range []string{"left", "main", "right"} {
+							if node, ok := newLayout.Panels[pn]; ok && node != nil {
+								tree := components.LayoutTree(newLayout, pn)
+								_ = sse.MergeFragmentTempl(tree,
+									datastar.WithSelectorID(pn+"-panel-content"),
+								)
+							}
+						}
+					} else {
+						grid := components.SubscriptionsGrid(newSubs)
+						_ = sse.MergeFragmentTempl(grid,
+							datastar.WithSelectorID("main-panel-content"),
 						)
 					}
-					// Clear existing command forms before injecting new ones
-					_ = sse.MergeFragments("",
-						datastar.WithSelectorID("left-panel-content"),
-						datastar.WithMergeMode(datastar.FragmentMergeModeInner),
-					)
-					// Render command forms in left sidebar
-					if len(newState.Commands) > 0 {
-						for _, cd := range newState.Commands {
-							frag := components.CommandForm(cd.Type, cd.Script, cd.Defaults)
-							_ = sse.MergeFragmentTempl(frag,
-								datastar.WithSelectorID("left-panel-content"),
-								datastar.WithMergeAppend(),
-							)
-						}
-					}
-
 					// Update stored layout reference
 					layoutTree = newLayout
-
 					// Recreate renderer set and consumer
 					sessionRenderers = runtime.ForSubjects(newSubs)
 					consumerCancel()

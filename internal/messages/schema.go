@@ -49,9 +49,8 @@ const (
 	ScriptJobDataSubjectPattern     = "event.script.*.job.*.data" // NEW
 
 	// Terminal domain
-	TerminalCommandSubject        = "terminal.command" // Static subject
-	TerminalFreezeSubjectPattern  = "event.terminal.session.*.freeze"
-	TerminalViewDocSubjectPattern = "event.terminal.session.*.viewdoc"
+	TerminalCommandSubject       = "terminal.command" // Static subject
+	TerminalFreezeSubjectPattern = "event.terminal.session.*.freeze"
 )
 
 // =============================================================================
@@ -237,20 +236,6 @@ func (e TerminalFreezeEvent) IsEvent()             {}
 func (e TerminalFreezeEvent) Timestamp() time.Time { return e.FrozenAt }
 func (e TerminalFreezeEvent) Validate() error      { return nil }
 
-// TerminalViewDocEvent triggers document viewing in the UI
-type TerminalViewDocEvent struct {
-	SessionID string    `json:"session_id"`
-	Paths     []string  `json:"paths"`
-	ViewedAt  time.Time `json:"viewed_at"`
-}
-
-func (e TerminalViewDocEvent) Subject() string {
-	return fmt.Sprintf("event.terminal.session.%s.viewdoc", e.SessionID)
-}
-func (e TerminalViewDocEvent) IsEvent()             {}
-func (e TerminalViewDocEvent) Timestamp() time.Time { return e.ViewedAt }
-func (e TerminalViewDocEvent) Validate() error      { return nil }
-
 // =============================================================================
 // HELPER FUNCTIONS
 // =============================================================================
@@ -290,8 +275,4 @@ func ScriptJobDataSubject(scriptName, jobID string) string {
 
 func TerminalFreezeSubject(sessionID string) string {
 	return fmt.Sprintf("event.terminal.session.%s.freeze", sessionID)
-}
-
-func TerminalViewDocSubject(sessionID string) string {
-	return fmt.Sprintf("event.terminal.session.%s.viewdoc", sessionID)
 }

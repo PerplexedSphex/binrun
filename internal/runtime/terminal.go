@@ -24,13 +24,24 @@ import (
 type TerminalEngine struct {
 	js        jetstream.JetStream
 	publisher *messages.Publisher
+	commands  map[string]TerminalCommand
 }
 
 func NewTerminalEngine(js jetstream.JetStream) *TerminalEngine {
-	return &TerminalEngine{
+	engine := &TerminalEngine{
 		js:        js,
 		publisher: messages.NewPublisher(js),
+		commands:  make(map[string]TerminalCommand),
 	}
+	// Register built-in commands
+	engine.commands["help"] = &HelpCommand{engine: engine}
+	engine.commands["echo"] = &EchoCommand{engine: engine}
+	engine.commands["env"] = &EnvCommand{engine: engine}
+	engine.commands["ls"] = &LSCommand{engine: engine}
+	engine.commands["load"] = &LoadCommand{engine: engine}
+	engine.commands["script"] = &ScriptCommand{engine: engine}
+	engine.commands["view"] = &ViewCommand{engine: engine}
+	return engine
 }
 
 // Start creates a consumer on TERMINAL_CMD and blocks until ctx is done.
@@ -157,208 +168,44 @@ Examples:
 	}
 }
 
+// TerminalEngine.handleCommand dispatches incoming terminal commands via the command registry.
 func (te *TerminalEngine) handleCommand(ctx context.Context, msg jetstream.Msg) {
+	// Decode the incoming command message
 	var in messages.TerminalCommandMessage
 	if err := json.Unmarshal(msg.Data(), &in); err != nil {
 		slog.Warn("terminal: bad cmd payload", "err", err)
 		_ = msg.Ack()
 		return
 	}
-
-	// Session ID now comes from the message body
 	sid := in.SessionID
 	if sid == "" {
 		slog.Warn("terminal: missing session ID in message body")
 		_ = msg.Ack()
 		return
 	}
-
-	parts := strings.Fields(in.Cmd)
-
-	// --- help handling ---------------------------------------------------
+	// Split command into parts
+	parts := tokenizeCommand(in.Cmd)
+	// Load current session state (or default)
+	state, err := te.getSessionState(ctx, sid)
+	if err != nil {
+		state = layoutpkg.SessionState{Env: make(map[string]string), Layout: nil}
+	}
+	var newState layoutpkg.SessionState
+	var result CommandResult
+	// Dispatch
 	if len(parts) > 0 {
-		// general "help" or explicit topic
-		if parts[0] == "help" {
-			topic := ""
-			if len(parts) > 1 {
-				topic = parts[1]
-			}
-			te.sendFreeze(ctx, sid, in.Cmd, te.helpText(topic), msg)
-			return
-		}
-		// trailing -h / --help form
-		if last := parts[len(parts)-1]; last == "-h" || last == "--help" {
-			topic := parts[0]
-			te.sendFreeze(ctx, sid, in.Cmd, te.helpText(topic), msg)
-			return
-		}
-	}
-
-	// Check for preset management commands
-	if txt, handled := te.handlePresetCommand(ctx, sid, in.Cmd, parts); handled {
-		te.sendFreeze(ctx, sid, in.Cmd, txt, msg)
-		return
-	}
-
-	// Check for env commands
-	if txt, handled := te.handleEnvCommand(ctx, sid, in.Cmd, parts); handled {
-		te.sendFreeze(ctx, sid, in.Cmd, txt, msg)
-		return
-	}
-
-	// Simple regex dispatch (non-preset, non-help)
-	outText := "ok"
-	var docPath string       // Declare docPath here for broader scope
-	var pathsToView []string // Declare here for access later
-
-	switch {
-	case strings.HasPrefix(in.Cmd, "view "):
-		parts := strings.Split(in.Cmd, " ")
-		if len(parts) < 2 {
-			outText = "usage: view <doc|scriptname> [schema|types|env]"
-			break
-		}
-		doc := strings.ToLower(parts[1])
-		switch doc {
-		case "readme", "readme.md":
-			docPath = "README.md"
-		default: // Assume it's a script name
-			scriptName := parts[1] // Use original case
-			scriptDir := filepath.Join("scripts", scriptName)
-			info, err := os.Stat(scriptDir)
-			if err != nil || !info.IsDir() {
-				outText = fmt.Sprintf("script '%s' not found or not a directory", scriptName)
-				break
-			}
-
-			// Check for subcommands
-			if len(parts) > 2 {
-				switch parts[2] {
-				case "schema":
-					target := "in"
-					if len(parts) > 3 {
-						target = parts[3]
-					}
-					schemaFile := fmt.Sprintf("%s.schema.json", target)
-					schemaPath := filepath.Join(scriptDir, schemaFile)
-					if _, err := os.Stat(schemaPath); err != nil {
-						outText = fmt.Sprintf("schema file not found: %s", schemaFile)
-						break
-					}
-					pathsToView = []string{schemaPath}
-					docPath = "schema-view"
-					outText = fmt.Sprintf("opening %s schema for %s", target, scriptName)
-				case "types":
-					typesDir := filepath.Join(scriptDir, "types")
-					if _, err := os.Stat(typesDir); err != nil {
-						outText = "types directory not found (run script create first)"
-						break
-					}
-					// Find all type files
-					entries, _ := os.ReadDir(typesDir)
-					for _, e := range entries {
-						if !e.IsDir() {
-							pathsToView = append(pathsToView, filepath.Join(typesDir, e.Name()))
-						}
-					}
-					if len(pathsToView) == 0 {
-						outText = "no type files found"
-						break
-					}
-					docPath = "types-view"
-					outText = fmt.Sprintf("opening %d type files for %s", len(pathsToView), scriptName)
-				case "env":
-					envPath := filepath.Join(scriptDir, ".env")
-					if _, err := os.Stat(envPath); err != nil {
-						outText = "no .env file found for this script"
-						break
-					}
-					pathsToView = []string{envPath}
-					docPath = "env-view"
-					outText = fmt.Sprintf("opening .env for %s", scriptName)
-				default:
-					outText = "unknown subcommand: " + parts[2]
-				}
-			} else {
-				// Default view behavior
-				mainFile := findMainScriptFile(scriptDir)
-				if mainFile == "" {
-					outText = fmt.Sprintf("main script file not found in '%s'", scriptName)
-					break
-				}
-				// Collect paths: README first, then main file
-				readmePath := filepath.Join(scriptDir, "README.md")
-				if _, err := os.Stat(readmePath); err == nil {
-					pathsToView = append(pathsToView, readmePath)
-				}
-				pathsToView = append(pathsToView, filepath.Join(scriptDir, mainFile))
-				docPath = "script-view"
-			}
-		}
-
-		// Publish viewdoc event if we have paths
-		if len(pathsToView) > 0 || docPath == "README.md" {
-			var pathsPayload []string
-			if docPath == "README.md" {
-				pathsPayload = []string{"README.md"}
-			} else {
-				pathsPayload = pathsToView
-			}
-
-			evt := messages.NewTerminalViewDocEvent(sid, pathsPayload)
-			if err := te.publisher.PublishEvent(ctx, evt); err != nil {
-				slog.Warn("terminal: publish viewdoc", "err", err)
-			}
-
-			// Ensure session is subscribed
-			te.ensureSessionSubscribed(ctx, sid, messages.TerminalViewDocSubject(sid))
-
-			if docPath == "README.md" && outText == "ok" {
-				outText = "opening README.md"
-			}
-		}
-
-	case strings.HasPrefix(in.Cmd, "echo "):
-		outText = strings.TrimSpace(strings.TrimPrefix(in.Cmd, "echo "))
-
-	case strings.HasPrefix(in.Cmd, "script create "):
-		parts := strings.Split(in.Cmd, " ")
-		if len(parts) < 4 {
-			outText = "usage: script create <name> <lang>"
-			break
-		}
-		name := parts[2]
-		lang := parts[3]
-		cmd := messages.NewScriptCreateCommand(name, lang).WithCorrelation(in.Cmd)
-		if err := te.publisher.PublishCommand(ctx, cmd); err != nil {
-			slog.Error("Failed to publish script create command", "err", err)
-			outText = "error: failed to create script"
+		if cmd, ok := te.commands[parts[0]]; ok {
+			newState, result = cmd.Execute(ctx, sid, state, parts)
 		} else {
-			outText = "script create requested"
+			newState, result = state, CommandResult{Output: "error: unknown command"}
 		}
-
-	case strings.HasPrefix(in.Cmd, "script run "):
-		outText = te.handleScriptRun(ctx, sid, in.Cmd)
-
-	case strings.HasPrefix(in.Cmd, "script info "):
-		parts := strings.Split(in.Cmd, " ")
-		if len(parts) < 3 {
-			outText = "usage: script info <name>"
-			break
-		}
-		scriptName := parts[2]
-		outText = te.getScriptInfo(scriptName)
-
-	default:
-		outText = "error: unknown command"
+	} else {
+		newState, result = state, CommandResult{Output: "error: empty command"}
 	}
-
-	// If docPath is still "", it means the switch default block failed to find a script
-	if docPath == "" && outText == "ok" { // Check if docPath was set at all
-		outText = "error: view target not found"
-	}
-
-	te.sendFreeze(ctx, sid, in.Cmd, outText, msg)
+	// Persist new state
+	_ = te.saveSessionState(ctx, sid, newState)
+	// Send output back to the client
+	te.sendFreeze(ctx, sid, in.Cmd, result.Output, msg)
 }
 
 // handleScriptRun processes the script run command with new JSON input and env support
@@ -641,32 +488,6 @@ func (te *TerminalEngine) getSessionEnv(ctx context.Context, sid string) map[str
 	return state.Env
 }
 
-// ensureSessionSubscribed adds a subject to the session if not already present
-func (te *TerminalEngine) ensureSessionSubscribed(ctx context.Context, sid, subject string) {
-	kv, err := te.js.KeyValue(ctx, "sessions")
-	if err != nil {
-		return
-	}
-
-	// Load session state
-	entry, err := kv.Get(ctx, sid)
-	state := layoutpkg.SessionState{}
-	if err == nil && entry != nil {
-		st, err2 := layoutpkg.LoadSessionData(entry.Value())
-		if err2 == nil {
-			state = st
-		}
-	}
-	// Add subscription if missing
-	if !slices.Contains(state.Subscriptions, subject) {
-		state.Subscriptions = append(state.Subscriptions, subject)
-		slices.Sort(state.Subscriptions)
-		dataObj, _ := state.Raw()
-		raw, _ := json.Marshal(dataObj)
-		_, _ = kv.Put(ctx, sid, raw)
-	}
-}
-
 // tokenizeCommand splits a command string respecting quoted strings
 func tokenizeCommand(cmd string) []string {
 	var tokens []string
@@ -755,102 +576,6 @@ func parseFlags(parts []string) (map[string]string, []string) {
 	return flags, positionals
 }
 
-func (te *TerminalEngine) handlePresetCommand(ctx context.Context, sid string, cmd string, parts []string) (string, bool) {
-	if len(parts) == 0 {
-		return "", false
-	}
-
-	switch parts[0] {
-	case "ls":
-		// ls presets OR ls preset <id>
-		if len(parts) >= 2 && parts[1] == "presets" {
-			keys := make([]string, 0, len(layoutpkg.Presets))
-			for k := range layoutpkg.Presets {
-				keys = append(keys, k)
-			}
-			slices.Sort(keys)
-			return "available presets: " + strings.Join(keys, ", "), true
-		}
-		if len(parts) >= 2 && parts[1] == "scripts" {
-			dirs, err := os.ReadDir("./scripts")
-			if err != nil {
-				return "error reading scripts directory", true
-			}
-			var scriptList []string
-			for _, entry := range dirs {
-				if entry.IsDir() {
-					scriptName := entry.Name()
-					lang := guessScriptLang("./scripts/" + scriptName)
-					if lang != "" {
-						scriptList = append(scriptList, fmt.Sprintf("%s (%s)", scriptName, lang))
-					} else {
-						scriptList = append(scriptList, scriptName)
-					}
-				}
-			}
-			slices.Sort(scriptList)
-			return "available scripts:\n  " + strings.Join(scriptList, "\n  "), true
-		}
-		if len(parts) >= 3 && parts[1] == "preset" {
-			key := parts[2]
-			p, ok := layoutpkg.Presets[key]
-			if !ok {
-				return "unknown preset", true
-			}
-			subj := p.Build(map[string]string{})
-			return fmt.Sprintf("%s: %v", key, subj), true
-		}
-	case "load":
-		if len(parts) < 2 {
-			return "usage: load <presetID> [--key value ...]", true
-		}
-		key := parts[1]
-		p, ok := layoutpkg.Presets[key]
-		if !ok {
-			return "unknown preset", true
-		}
-
-		flagArgs, _ := parseFlags(parts[2:])
-		subs := p.Build(flagArgs)
-
-		// include terminal freeze sub
-		term := messages.TerminalFreezeSubject(sid)
-		if !slices.Contains(subs, term) {
-			subs = append(subs, term)
-		}
-		slices.Sort(subs)
-
-		kv, err := te.js.KeyValue(ctx, "sessions")
-		if err != nil {
-			return "kv error", true
-		}
-		// Load existing session state
-		entry, err := kv.Get(ctx, sid)
-		state := layoutpkg.SessionState{}
-		if err == nil && entry != nil {
-			st, err2 := layoutpkg.LoadSessionData(entry.Value())
-			if err2 == nil {
-				state = st
-			}
-		}
-		// Update subscriptions
-		state.Subscriptions = subs
-		// Update commands
-		state.Commands = p.BuildCommands(flagArgs)
-		state.Layout, _ = p.BuildLayout(flagArgs)
-		// Save back
-		dataObj, _ := state.Raw()
-		raw, _ := json.Marshal(dataObj)
-		if _, err := kv.Put(ctx, sid, raw); err != nil {
-			slog.Warn("terminal: preset kv put", "err", err)
-			return "failed to load preset", true
-		}
-		return fmt.Sprintf("preset %s loaded (%d subjects)", key, len(subs)), true
-	}
-
-	return "", false
-}
-
 // sendFreeze publishes the freeze event and acks/naks appropriately.
 func (te *TerminalEngine) sendFreeze(ctx context.Context, sid, originalCmd, output string, msg jetstream.Msg) {
 	evt := messages.NewTerminalFreezeEvent(sid, originalCmd, output)
@@ -860,4 +585,55 @@ func (te *TerminalEngine) sendFreeze(ctx context.Context, sid, originalCmd, outp
 		return
 	}
 	_ = msg.Ack()
+}
+
+// HelpCommand is the built-in "help" terminal command.
+type HelpCommand struct {
+	engine *TerminalEngine
+}
+
+// Name returns the command key.
+func (c *HelpCommand) Name() string { return "help" }
+
+// Help returns the help text for the help command.
+func (c *HelpCommand) Help() string { return c.engine.helpText("") }
+
+// Execute runs the help command, returning unchanged state and help output.
+func (c *HelpCommand) Execute(ctx context.Context, sessionID string, state layoutpkg.SessionState, args []string) (layoutpkg.SessionState, CommandResult) {
+	topic := ""
+	if len(args) > 1 {
+		topic = args[1]
+	}
+	return state, CommandResult{Output: c.engine.helpText(topic)}
+}
+
+// getSessionState loads the session state from KV or returns an error.
+func (te *TerminalEngine) getSessionState(ctx context.Context, sid string) (layoutpkg.SessionState, error) {
+	kv, err := te.js.KeyValue(ctx, "sessions")
+	if err != nil {
+		return layoutpkg.SessionState{}, err
+	}
+	entry, err := kv.Get(ctx, sid)
+	if err != nil {
+		return layoutpkg.SessionState{}, err
+	}
+	return layoutpkg.LoadSessionData(entry.Value())
+}
+
+// saveSessionState persists the session state to KV (ignoring errors).
+func (te *TerminalEngine) saveSessionState(ctx context.Context, sid string, state layoutpkg.SessionState) error {
+	kv, err := te.js.KeyValue(ctx, "sessions")
+	if err != nil {
+		return err
+	}
+	dataObj, err := state.Raw()
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(dataObj)
+	if err != nil {
+		return err
+	}
+	_, err = kv.Put(ctx, sid, raw)
+	return err
 }

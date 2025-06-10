@@ -1,16 +1,13 @@
 package layout
 
 import (
+	"binrun/internal/messages"
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
-
-	components "binrun/ui/components"
-
-	templ "github.com/a-h/templ"
-	datastar "github.com/starfederation/datastar/sdk/go"
 )
 
 // LayoutNode represents a node in the layout tree.
@@ -18,6 +15,12 @@ import (
 type LayoutNode struct {
 	// For leaf nodes
 	Subscription string `json:"subscription,omitempty"`
+
+	// For document nodes: a list of file paths to render as markdown
+	DocumentPaths []string `json:"document_paths,omitempty"`
+
+	// For built-in component nodes (e.g. "terminal")
+	Component string `json:"component,omitempty"`
 
 	// For command nodes
 	Command  string         `json:"command,omitempty"`  // message type e.g. "ScriptCreateCommand"
@@ -42,6 +45,12 @@ type PanelLayout struct {
 
 // NodeType returns the type of this layout node
 func (n *LayoutNode) NodeType() string {
+	if len(n.DocumentPaths) > 0 {
+		return "document"
+	}
+	if n.Component != "" {
+		return "component"
+	}
 	if n.Subscription != "" {
 		return "leaf"
 	}
@@ -60,6 +69,10 @@ func (n *LayoutNode) NodeType() string {
 // Validate checks if the layout node is valid according to the spec
 func (n *LayoutNode) Validate() error {
 	switch n.NodeType() {
+	case "document":
+		return n.validateDocument()
+	case "component":
+		return n.validateComponent()
 	case "leaf":
 		return n.validateLeaf()
 	case "command":
@@ -69,7 +82,7 @@ func (n *LayoutNode) Validate() error {
 	case "even":
 		return n.validateEven()
 	default:
-		return fmt.Errorf("invalid node type")
+		return fmt.Errorf("invalid node type '%s'", n.NodeType())
 	}
 }
 
@@ -159,6 +172,34 @@ func (n *LayoutNode) validateEven() error {
 		if err := item.Validate(); err != nil {
 			return fmt.Errorf("item %d: %w", i, err)
 		}
+	}
+	return nil
+}
+
+// validateComponent ensures only the Component field is set on a component node
+func (n *LayoutNode) validateComponent() error {
+	if n.Component == "" {
+		return fmt.Errorf("component node must have component field")
+	}
+	// All other fields must be empty or nil
+	if n.Subscription != "" || n.Command != "" || n.Script != "" || n.Defaults != nil ||
+		n.Split != "" || n.At != "" || n.First != nil || n.Second != nil ||
+		n.Direction != "" || n.Items != nil {
+		return fmt.Errorf("component node must only have component field")
+	}
+	return nil
+}
+
+// validateDocument ensures only the DocumentPaths field is set on a document node
+func (n *LayoutNode) validateDocument() error {
+	if len(n.DocumentPaths) == 0 {
+		return fmt.Errorf("document node must have at least one path")
+	}
+	// All other fields must be empty or nil
+	if n.Subscription != "" || n.Component != "" || n.Command != "" || n.Script != "" || n.Defaults != nil ||
+		n.Split != "" || n.At != "" || n.First != nil || n.Second != nil ||
+		n.Direction != "" || n.Items != nil {
+		return fmt.Errorf("document node must only have document_paths field")
 	}
 	return nil
 }
@@ -255,37 +296,58 @@ func (p *PanelLayout) GetSubscriptions() []string {
 	return subs
 }
 
-// RenderFragment defines a UI component to render into a selector via SSE.
-type RenderFragment struct {
-	Component  templ.Component
-	SelectorID string
-	Options    []datastar.MergeFragmentOption
+// LayoutFragments is no longer provided in layout package. UI rendering is handled in platform.
+
+// getRequiredSubscriptions returns all NATS subjects this node requires, including built-in components.
+func (n *LayoutNode) getRequiredSubscriptions(sessionID string) []string {
+	if n == nil {
+		return nil
+	}
+	// Built-in component subscriptions
+	if n.Component != "" {
+		switch n.Component {
+		case "terminal":
+			return []string{messages.TerminalFreezeSubject(sessionID)}
+		}
+		return nil
+	}
+	// Leaf subscription
+	if n.Subscription != "" {
+		return []string{n.Subscription}
+	}
+	// Binary split
+	if n.Split == "horizontal" || n.Split == "vertical" {
+		subs := n.First.getRequiredSubscriptions(sessionID)
+		subs = append(subs, n.Second.getRequiredSubscriptions(sessionID)...)
+		return subs
+	}
+	// Even split
+	if strings.HasPrefix(n.Split, "even-") {
+		var subs []string
+		for _, item := range n.Items {
+			subs = append(subs, item.getRequiredSubscriptions(sessionID)...)
+		}
+		return subs
+	}
+	return nil
 }
 
-// LayoutFragments computes the list of RenderFragments for the given layout and subscriptions.
-// It generates panel-specific LayoutTree fragments or a fallback grid fragment.
-func LayoutFragments(layout *PanelLayout, subs []string) []RenderFragment {
-	var frags []RenderFragment
-	if layout != nil {
-		compLayout := ConvertToComponents(layout)
-		for _, pn := range []string{"left", "main", "right"} {
-			if _, ok := compLayout.Panels[pn]; !ok {
-				continue
-			}
-			tree := components.LayoutTree(compLayout, pn)
-			frags = append(frags, RenderFragment{
-				Component:  tree,
-				SelectorID: pn + "-panel-content",
-				Options:    nil,
-			})
-		}
-	} else {
-		grid := components.SubscriptionsGrid(subs)
-		frags = append(frags, RenderFragment{
-			Component:  grid,
-			SelectorID: "main-panel-content",
-			Options:    nil,
-		})
+// GetRequiredSubscriptions traverses the entire layout and returns a deduplicated list of required NATS subjects.
+func (p *PanelLayout) GetRequiredSubscriptions(sessionID string) []string {
+	if p == nil || p.Panels == nil {
+		return nil
 	}
-	return frags
+	var subs []string
+	for _, node := range p.Panels {
+		subs = append(subs, node.getRequiredSubscriptions(sessionID)...)
+	}
+	// Deduplicate
+	sort.Strings(subs)
+	unique := make([]string, 0, len(subs))
+	for i, s := range subs {
+		if i == 0 || s != subs[i-1] {
+			unique = append(unique, s)
+		}
+	}
+	return unique
 }

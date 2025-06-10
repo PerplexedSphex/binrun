@@ -1,0 +1,11 @@
+{
+  "id": "default",
+  "help": "Default layout with terminal in right panel",
+  "layout": {
+    "panels": {
+      "right": {
+        "component": "terminal"
+      }
+    }
+  }
+} 

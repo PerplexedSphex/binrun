@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 
 	"binrun/internal/layout"
@@ -136,14 +135,8 @@ func LoadPresetHandler(js jetstream.JetStream) http.HandlerFunc {
 			}
 		}
 
-		subs := preset.Build(args)
-		// Ensure terminal subscription is included
+		// Build and set layout for the preset
 		sid := SessionID(r)
-		termSubj := messages.TerminalFreezeSubject(sid)
-		if !slices.Contains(subs, termSubj) {
-			subs = append(subs, termSubj)
-		}
-		slices.Sort(subs) // Sort for consistency
 
 		// Update the session KV
 		kv, err := js.KeyValue(r.Context(), "sessions")
@@ -155,18 +148,14 @@ func LoadPresetHandler(js jetstream.JetStream) http.HandlerFunc {
 
 		// Load existing session state to preserve env and layout
 		entry, err := kv.Get(r.Context(), sid)
-		var state layout.SessionState
+		state := layout.SessionState{}
 		if err == nil && entry != nil {
 			st, err2 := layout.LoadSessionData(entry.Value())
 			if err2 == nil {
 				state = st
 			}
 		}
-		// Update subscriptions
-		state.Subscriptions = subs
-		// Update commands
-		state.Commands = preset.BuildCommands(args)
-		// Update layout
+		// Update layout only
 		builtLayout, err2 := preset.BuildLayout(args)
 		if err2 != nil {
 			slog.Error("LoadPresetHandler: failed to build layout", "preset", presetID, "err", err2)
@@ -183,41 +172,5 @@ func LoadPresetHandler(js jetstream.JetStream) http.HandlerFunc {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
-	}
-}
-
-// TerminalCommandHandler publishes the JSON body to terminal.session.<sid>.command.
-func TerminalCommandHandler(js jetstream.JetStream) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		sid := SessionID(r)
-		publisher := messages.NewPublisher(js)
-
-		var cmdText string
-		// Attempt to parse as form (handles urlencoded and multipart).
-		if err := r.ParseMultipartForm(10 << 20); err == nil && (len(r.Form) > 0 || len(r.PostForm) > 0 || (r.MultipartForm != nil && len(r.MultipartForm.Value) > 0)) {
-			cmdText = r.FormValue("cmd")
-		} else {
-			// fallback to JSON body
-			var body map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				http.Error(w, "bad body", 400)
-				return
-			}
-			if cmd, ok := body["cmd"].(string); ok {
-				cmdText = cmd
-			}
-		}
-
-		if cmdText == "" {
-			http.Error(w, "missing cmd", 400)
-			return
-		}
-
-		cmd := messages.NewTerminalCommandMessage(sid, cmdText)
-		if err := publisher.PublishCommand(r.Context(), cmd); err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-		w.WriteHeader(http.StatusAccepted)
 	}
 }

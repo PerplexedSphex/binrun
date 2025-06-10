@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"binrun/internal/messages"
@@ -30,20 +29,6 @@ func renderTerminal(ctx context.Context, msg jetstream.Msg, sse *datastar.Server
 		components.TerminalPrompt(),
 		datastar.WithSelectorID("live-prompt"),
 	)
-}
-
-func renderViewDoc(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerSentEventGenerator, evt messages.TerminalViewDocEvent) error {
-	slog.Info("renderViewDoc called", "subject", msg.Subject(), "receivedPaths", evt.Paths)
-	// Check if paths were provided
-	if len(evt.Paths) == 0 {
-		// Maybe render an error or default content?
-		// For now, let's assume the terminal command always sends at least one path.
-		slog.Warn("renderViewDoc received empty paths, skipping fragment merge.")
-		return nil // Or return an error
-	}
-	frag := components.DocMarkdown(evt.Paths)
-	// The fragment now includes the target div, so no selector needed.
-	return sse.MergeFragmentTempl(frag)
 }
 
 // ─────────────────── SCRIPT EVENTS ─────────────────────
@@ -102,10 +87,6 @@ func renderJobExit(ctx context.Context, msg jetstream.Msg, sse *datastar.ServerS
 
 func init() {
 	Specs = []RendererSpec{
-		// Doc viewer
-		{Pattern: messages.TerminalViewDocSubjectPattern, Build: func(subj string) Renderer {
-			return newTypedRenderer[messages.TerminalViewDocEvent](subj, renderViewDoc)
-		}},
 		{Pattern: messages.TerminalFreezeSubjectPattern, Build: func(subj string) Renderer {
 			return newTypedRenderer[messages.TerminalFreezeEvent](subj, renderTerminal)
 		}},

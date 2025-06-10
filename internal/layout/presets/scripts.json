@@ -2,15 +2,6 @@
     "id": "scriptsubs",
     "help": "Script lifecycle events",
     "params": ["script", "job"],
-    "subscriptions": [
-      "event.script.{script}.job.{job}.started",
-      "event.script.{script}.job.{job}.exit",
-      "event.script.{script}.job.{job}.stdout",
-      "event.script.{script}.job.{job}.stderr"
-    ],
-    "commands": [
-      { "type": "ScriptRunCommand", "script": "{script}", "defaults": {} }
-    ],
     "layout": {
       "panels": {
         "left": {
@@ -33,6 +24,9 @@
             "first": { "subscription": "event.script.{script}.job.{job}.stdout" },
             "second": { "subscription": "event.script.{script}.job.{job}.stderr" }
           }
+        },
+        "right": {
+          "component": "terminal"
         }
       }
     }

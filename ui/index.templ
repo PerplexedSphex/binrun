@@ -129,11 +129,9 @@ templ Index() {
                  document.body.classList.remove('dragging');
              "></div>
 
-        <!-- right sidebar -->
+        <!-- right sidebar - content injected by layout SSE -->
         <aside id="right-panel" data-show="$rightOpen">
-            <div id="right-panel-content">
-                @components.Terminal()
-            </div>
+            <div id="right-panel-content"></div>
         </aside>
 
         <!-- horizontal handle -->

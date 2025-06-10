@@ -185,15 +185,6 @@ func NewTerminalFreezeEvent(sessionID, cmd, output string) *TerminalFreezeEvent 
 	}
 }
 
-// NewTerminalViewDocEvent creates a terminal view doc event
-func NewTerminalViewDocEvent(sessionID string, paths []string) *TerminalViewDocEvent {
-	return &TerminalViewDocEvent{
-		SessionID: sessionID,
-		Paths:     paths,
-		ViewedAt:  time.Now(),
-	}
-}
-
 // =============================================================================
 // VALIDATION - Implementation of Validate() methods
 // =============================================================================
@@ -296,7 +287,6 @@ func SubjectPatterns() map[string]string {
 		"script.job.data":     ScriptJobDataSubjectPattern,
 		"terminal.command":    TerminalCommandSubject,
 		"terminal.freeze":     TerminalFreezeSubjectPattern,
-		"terminal.viewdoc":    TerminalViewDocSubjectPattern,
 	}
 }
 

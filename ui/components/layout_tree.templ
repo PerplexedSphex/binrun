@@ -2,53 +2,11 @@ package components
 
 import (
 	"fmt"
+	layout "binrun/internal/layout"
 )
 
-// LayoutNode mirrors platform.LayoutNode to avoid import cycle
-type LayoutNode struct {
-	// For leaf nodes
-	Subscription string `json:"subscription,omitempty"`
-
-	// For command nodes
-	Command  string         `json:"command,omitempty"`
-	Script   string         `json:"script,omitempty"`
-	Defaults map[string]any `json:"defaults,omitempty"`
-
-	// For binary splits
-	Split  string      `json:"split,omitempty"`
-	At     string      `json:"at,omitempty"`
-	First  *LayoutNode `json:"first,omitempty"`
-	Second *LayoutNode `json:"second,omitempty"`
-
-	// For even splits
-	Direction string        `json:"direction,omitempty"`
-	Items     []*LayoutNode `json:"items,omitempty"`
-}
-
-// PanelLayout mirrors platform.PanelLayout
-type PanelLayout struct {
-	Panels map[string]*LayoutNode `json:"panels"`
-}
-
-// NodeType returns the type of this layout node
-func (n *LayoutNode) NodeType() string {
-	if n.Subscription != "" {
-		return "leaf"
-	}
-	if n.Command != "" {
-		return "command"
-	}
-	if n.Split == "horizontal" || n.Split == "vertical" {
-		return "binary"
-	}
-	if len(n.Split) > 5 && n.Split[:5] == "even-" {
-		return "even"
-	}
-	return "unknown"
-}
-
 // LayoutTree renders the entire panel layout
-templ LayoutTree(layout *PanelLayout, panelName string) {
+templ LayoutTree(layout *layout.PanelLayout, panelName string) {
 	if layout == nil || layout.Panels == nil {
 		// No layout, render nothing
 		<div id={panelName + "-panel-content"}></div>
@@ -63,8 +21,10 @@ templ LayoutTree(layout *PanelLayout, panelName string) {
 }
 
 // renderLayoutNode recursively renders a layout node
-templ renderLayoutNode(node *LayoutNode, panelName string, path string) {
+templ renderLayoutNode(node *layout.LayoutNode, panelName string, path string) {
 	switch node.NodeType() {
+	case "document":
+		@renderDocumentNode(node, panelName, path)
 	case "leaf":
 		@renderLeafNode(node, panelName, path)
 	case "command":
@@ -73,25 +33,27 @@ templ renderLayoutNode(node *LayoutNode, panelName string, path string) {
 		@renderBinaryNode(node, panelName, path)
 	case "even":
 		@renderEvenNode(node, panelName, path)
+	case "component":
+		@renderComponentNode(node, panelName, path)
 	}
 }
 
 // renderLeafNode renders a subscription container
-templ renderLeafNode(node *LayoutNode, panelName string, path string) {
+templ renderLeafNode(node *layout.LayoutNode, panelName string, path string) {
 	<div class="layout-leaf" data-path={path}>
 		@SubscriptionContainer(node.Subscription)
 	</div>
 }
 
 // renderCommandNode renders a command form
-templ renderCommandNode(node *LayoutNode, panelName string, path string) {
+templ renderCommandNode(node *layout.LayoutNode, panelName string, path string) {
 	<div class="layout-command" data-path={path}>
 		@CommandForm(node.Command, node.Script, node.Defaults)
 	</div>
 }
 
 // renderBinaryNode renders a binary split
-templ renderBinaryNode(node *LayoutNode, panelName string, path string) {
+templ renderBinaryNode(node *layout.LayoutNode, panelName string, path string) {
 	<div 
 		class={"layout-split", "layout-split-" + node.Split}
 		data-path={path}
@@ -107,7 +69,7 @@ templ renderBinaryNode(node *LayoutNode, panelName string, path string) {
 }
 
 // renderEvenNode renders an even split
-templ renderEvenNode(node *LayoutNode, panelName string, path string) {
+templ renderEvenNode(node *layout.LayoutNode, panelName string, path string) {
 	<div 
 		class={"layout-even", "layout-even-" + node.Direction}
 		data-path={path}
@@ -121,9 +83,21 @@ templ renderEvenNode(node *LayoutNode, panelName string, path string) {
 	</div>
 }
 
+// renderComponentNode renders a built-in component such as the terminal
+templ renderComponentNode(node *layout.LayoutNode, panelName string, path string) {
+	<div class="layout-component" data-path={path}>
+		@Terminal()
+	</div>
+}
+
+// renderDocumentNode renders a document viewer with provided paths
+templ renderDocumentNode(node *layout.LayoutNode, panelName string, path string) {
+	@DocMarkdown(node.DocumentPaths)
+}
+
 // Helper functions for generating CSS styles
 
-func getBinarySplitStyle(node *LayoutNode) string {
+func getBinarySplitStyle(node *layout.LayoutNode) string {
 	if node.Split == "horizontal" {
 		// horizontal = top/bottom split
 		switch node.At {
@@ -155,7 +129,7 @@ func getBinarySplitStyle(node *LayoutNode) string {
 	}
 }
 
-func getEvenSplitStyle(node *LayoutNode) string {
+func getEvenSplitStyle(node *layout.LayoutNode) string {
 	count := len(node.Items)
 	if node.Direction == "horizontal" {
 		// horizontal = row of items
