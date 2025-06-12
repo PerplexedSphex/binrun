@@ -1,0 +1,4 @@
+# scripts included
+find . -type f \( -name '*.go' -o -name '*.templ' -o -path './internal/layout/presets/*.json' -o -path './scripts/*/main.py' -o -path './scripts/*/index.ts' \) -not -name '*templ.go' -print0 | sort -z | while IFS= read -r -d '' f; do rel=${f#./}; printf '#===========\n%s\n#===========\n' "$rel"; cat "$f"; done | pbcopy
+# no scripts included
+find . -type f \( -name '*.go' -o -name '*.templ' -o -path './internal/layout/presets/*.json' \) -not -name '*templ.go' -print0 | sort -z | while IFS= read -r -d '' f; do rel=${f#./}; printf '#===========\n%s\n#===========\n' "$rel"; cat "$f"; done | pbcopy
