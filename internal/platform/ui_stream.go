@@ -11,9 +11,50 @@ import (
 
 	components "binrun/ui/components"
 
+	"github.com/a-h/templ"
 	"github.com/nats-io/nats.go/jetstream"
 	datastar "github.com/starfederation/datastar/sdk/go"
 )
+
+// helper to compare two sorted string slices
+func equalSubs(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// minimal interface for the SSE helper we need
+type sseWriter interface {
+	MergeFragmentTempl(t templ.Component, opts ...datastar.MergeFragmentOption) error
+}
+
+// renderPanels updates left/main/right based on layout; shows grid when layout is nil.
+func renderPanels(sse sseWriter, pl *layoutpkg.PanelLayout, sid string) {
+	if pl == nil {
+		// blank left/right, show grid in main
+		for _, pn := range []string{"left", "main", "right"} {
+			blank := components.LayoutTree(nil, pn)
+			_ = sse.MergeFragmentTempl(blank, datastar.WithSelectorID(pn+"-panel-content"))
+		}
+		return
+	}
+	// Have layout; render each panel, blanking if node nil
+	for _, pn := range []string{"left", "main", "right"} {
+		var comp templ.Component
+		if node, ok := pl.Panels[pn]; ok && node != nil {
+			comp = components.LayoutTree(pl, pn)
+		} else {
+			comp = components.LayoutTree(nil, pn)
+		}
+		_ = sse.MergeFragmentTempl(comp, datastar.WithSelectorID(pn+"-panel-content"))
+	}
+}
 
 // UIStream is the SSE handler for /ui
 func UIStream(js jetstream.JetStream) http.HandlerFunc {
@@ -75,22 +116,7 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 			return
 		}
 
-		// Render panels based on layout
-		if layoutTree != nil {
-			for _, pn := range []string{"left", "main", "right"} {
-				if node, ok := layoutTree.Panels[pn]; ok && node != nil {
-					tree := components.LayoutTree(layoutTree, pn)
-					_ = sse.MergeFragmentTempl(tree,
-						datastar.WithSelectorID(pn+"-panel-content"),
-					)
-				}
-			}
-		} else {
-			grid := components.SubscriptionsGrid(subs)
-			_ = sse.MergeFragmentTempl(grid,
-				datastar.WithSelectorID("main-panel-content"),
-			)
-		}
+		renderPanels(sse, layoutTree, sid)
 
 		// (Commands are rendered via declarative layout; no manual command merging)
 
@@ -177,32 +203,17 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 					}
 				}
 
-				if subsChanged {
-					// Render panels based on layout
-					if newLayout != nil {
-						for _, pn := range []string{"left", "main", "right"} {
-							if node, ok := newLayout.Panels[pn]; ok && node != nil {
-								tree := components.LayoutTree(newLayout, pn)
-								_ = sse.MergeFragmentTempl(tree,
-									datastar.WithSelectorID(pn+"-panel-content"),
-								)
-							}
-						}
-					} else {
-						grid := components.SubscriptionsGrid(newSubs)
-						_ = sse.MergeFragmentTempl(grid,
-							datastar.WithSelectorID("main-panel-content"),
-						)
-					}
-					// Update stored layout reference
-					layoutTree = newLayout
-					// Recreate renderer set and consumer
-					sessionRenderers = runtime.ForSubjects(newSubs)
-					consumerCancel()
-					<-consumerDone
-					consumerCancel, consumerDone = createConsumer(newSubs, sessionRenderers)
-					currentSubs = newSubs
-				}
+				// Always re-render panels on any session change
+				renderPanels(sse, newLayout, sid)
+
+				layoutTree = newLayout
+
+				// Recreate JetStream consumer for the (possibly unchanged) subject list
+				sessionRenderers = runtime.ForSubjects(newSubs)
+				consumerCancel()
+				<-consumerDone
+				consumerCancel, consumerDone = createConsumer(newSubs, sessionRenderers)
+				currentSubs = newSubs
 			}
 		}()
 

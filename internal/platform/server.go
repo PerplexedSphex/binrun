@@ -92,7 +92,6 @@ func RunHTTPServer(ctx context.Context, nc *nats.Conn, cfg HTTPServerConfig) <-c
 	}))
 
 	r.Get("/ui", UIStream(js))
-	r.Post("/session/load/{preset}", LoadPresetHandler(js))
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),

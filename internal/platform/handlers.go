@@ -3,14 +3,11 @@ package platform
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 
-	"binrun/internal/layout"
 	"binrun/internal/messages"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )
@@ -113,64 +110,5 @@ func SendCommand(nc *nats.Conn, js jetstream.JetStream) http.HandlerFunc {
 			"status": "sent",
 			"type":   messageType,
 		})
-	}
-}
-
-// Handler to load a preset's subscriptions into the session
-func LoadPresetHandler(js jetstream.JetStream) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		presetID := chi.URLParam(r, "preset")
-
-		preset, ok := layout.Presets[presetID]
-		if !ok {
-			http.Error(w, "unknown preset", http.StatusNotFound)
-			return
-		}
-
-		// Build argument map from query parameters (script, job, etc.)
-		args := map[string]string{}
-		for key, vals := range r.URL.Query() {
-			if len(vals) > 0 {
-				args[key] = vals[0]
-			}
-		}
-
-		// Build and set layout for the preset
-		sid := SessionID(r)
-
-		// Update the session KV
-		kv, err := js.KeyValue(r.Context(), "sessions")
-		if err != nil {
-			slog.Error("LoadPresetHandler: Failed to get KV", "err", err)
-			http.Error(w, "internal error", 500)
-			return
-		}
-
-		// Load existing session state to preserve env and layout
-		entry, err := kv.Get(r.Context(), sid)
-		state := layout.SessionState{}
-		if err == nil && entry != nil {
-			st, err2 := layout.LoadSessionData(entry.Value())
-			if err2 == nil {
-				state = st
-			}
-		}
-		// Update layout only
-		builtLayout, err2 := preset.BuildLayout(args)
-		if err2 != nil {
-			slog.Error("LoadPresetHandler: failed to build layout", "preset", presetID, "err", err2)
-			http.Error(w, err2.Error(), http.StatusInternalServerError)
-			return
-		}
-		state.Layout = builtLayout
-		// Serialize and put
-		dataObj, _ := state.Raw()
-		raw, _ := json.Marshal(dataObj)
-		if _, err := kv.Put(r.Context(), sid, raw); err != nil {
-			slog.Error("LoadPresetHandler: Failed to put KV", "sid", sid, "err", err)
-			http.Error(w, err.Error(), 500)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
 	}
 }

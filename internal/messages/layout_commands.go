@@ -65,8 +65,9 @@ func (c ApplyPresetCommand) Validate() error {
 	if c.SessionID == "" || c.PresetID == "" {
 		return errors.New("session_id and preset_id are required")
 	}
-	if c.Mode == "" {
-		c.Mode = PresetMergePanels
+	// Mode can be empty; treated as PresetMergePanels by consumer.
+	if c.Mode != "" && c.Mode != PresetReplaceAll && c.Mode != PresetMergePanels && c.Mode != PresetSinglePanel {
+		return fmt.Errorf("invalid mode: %s", c.Mode)
 	}
 	return nil
 }
@@ -92,8 +93,8 @@ func (c LayoutPatchCommand) Validate() error {
 	if c.SessionID == "" || len(c.Patch) == 0 {
 		return errors.New("session_id and patch are required")
 	}
-	if c.Type == "" {
-		c.Type = PatchMerge
+	if c.Type != "" && c.Type != PatchMerge && c.Type != PatchJSONPatch {
+		return fmt.Errorf("invalid patch type: %s", c.Type)
 	}
 	return nil
 }

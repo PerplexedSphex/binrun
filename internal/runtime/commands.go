@@ -128,21 +128,40 @@ func (c *LoadCommand) Execute(ctx context.Context, sessionID string, state layou
 		return state, CommandResult{Output: "usage: load <presetID> [--key value ...]"}
 	}
 	id := args[1]
-	p, ok := layout.Presets[id]
-	if !ok {
+	if _, ok := layout.Presets[id]; !ok {
 		return state, CommandResult{Output: "unknown preset"}
 	}
-	// parse flags after preset ID
+
+	// parse --key value pairs after preset ID into Args map
 	flagArgs, _ := parseFlags(args[2:])
-	built, err := p.BuildLayout(flagArgs)
-	if err != nil {
-		return state, CommandResult{Output: fmt.Sprintf("error: %v", err)}
+
+	// Extract special flags
+	modeStr, hasMode := flagArgs["mode"]
+	if hasMode {
+		delete(flagArgs, "mode")
 	}
-	state.Layout = built
-	// Persist state
-	_ = c.engine.saveSessionState(ctx, sessionID, state)
-	subs := built.GetRequiredSubscriptions(sessionID)
-	return state, CommandResult{Output: fmt.Sprintf("preset %s loaded (%d subscriptions)", id, len(subs))}
+	panelStr, hasPanel := flagArgs["panel"]
+	if hasPanel {
+		delete(flagArgs, "panel")
+	}
+
+	cmd := &messages.ApplyPresetCommand{
+		SessionID: sessionID,
+		PresetID:  id,
+		Args:      flagArgs,
+	}
+	if hasMode {
+		cmd.Mode = messages.ApplyPresetMode(modeStr)
+	}
+	if hasPanel {
+		cmd.Panel = panelStr
+	}
+
+	if err := c.engine.publisher.PublishCommand(ctx, cmd); err != nil {
+		return state, CommandResult{Output: "error: failed to send preset command"}
+	}
+
+	return state, CommandResult{Output: fmt.Sprintf("preset %s requested", id)}
 }
 
 // ScriptCommand handles script create, run, and info.

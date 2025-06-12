@@ -112,15 +112,22 @@ func (lm *LayoutManager) applyPreset(ctx context.Context, msg jetstream.Msg) {
 	entry, _ := kv.Get(ctx, c.SessionID)
 	st, _ := layout.LoadSessionData(entry.Value())
 
-	switch c.Mode {
+	mode := c.Mode
+	if mode == "" {
+		mode = layout.PresetMergePanels
+	}
+
+	switch mode {
 	case layout.PresetReplaceAll:
 		st.Layout = built
 	case layout.PresetMergePanels:
 		if st.Layout == nil {
 			st.Layout = &layout.PanelLayout{Panels: map[string]*layout.LayoutNode{}}
 		}
-		for pn, n := range built.Panels {
-			st.Layout.Panels[pn] = n
+		if built != nil {
+			for pn, n := range built.Panels {
+				st.Layout.Panels[pn] = n
+			}
 		}
 	case layout.PresetSinglePanel:
 		if c.Panel == "" {
@@ -130,7 +137,9 @@ func (lm *LayoutManager) applyPreset(ctx context.Context, msg jetstream.Msg) {
 		if st.Layout == nil {
 			st.Layout = &layout.PanelLayout{Panels: map[string]*layout.LayoutNode{}}
 		}
-		st.Layout.Panels[c.Panel] = built.Panels[c.Panel]
+		if built != nil {
+			st.Layout.Panels[c.Panel] = built.Panels[c.Panel]
+		}
 	default:
 		// Unknown mode
 		_ = msg.Nak()
