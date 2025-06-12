@@ -70,7 +70,7 @@ func TerminalPrompt() templ.Component {
 			templ_7745c5c3_Var2 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "<div class=\"term-line\" id=\"live-prompt\" data-scroll-into-view><span class=\"prompt\">&gt; </span><form class=\"term-form\" data-on-submit=\"@post(&#39;/terminal&#39;, {contentType: &#39;form&#39;})\"><input type=\"text\" name=\"cmd\" data-focus autocomplete=\"off\" spellcheck=\"false\"> <button type=\"submit\" style=\"display: none;\"></button></form></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "<div class=\"term-line\" id=\"live-prompt\" data-scroll-into-view__instant__vend__hcenter><span class=\"prompt\">&gt; </span><form class=\"term-form\" data-on-submit=\"@post(&#39;/command&#39;, {contentType: &#39;form&#39;})\"><input type=\"hidden\" name=\"_messageType\" value=\"TerminalCommandMessage\"> <input type=\"text\" name=\"cmd\" data-focus autocomplete=\"off\" spellcheck=\"false\"> <button type=\"submit\" style=\"display: none;\"></button></form></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -107,7 +107,7 @@ func TerminalResponseSpan(out string) templ.Component {
 		var templ_7745c5c3_Var4 string
 		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(out)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/terminal.templ`, Line: 27, Col: 31}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/terminal.templ`, Line: 28, Col: 31}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
@@ -150,7 +150,7 @@ func TerminalFrozenLine(cmd string, out string) templ.Component {
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(cmd)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/terminal.templ`, Line: 34, Col: 31}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/terminal.templ`, Line: 35, Col: 31}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -163,7 +163,7 @@ func TerminalFrozenLine(cmd string, out string) templ.Component {
 		var templ_7745c5c3_Var7 string
 		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(out)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/terminal.templ`, Line: 35, Col: 35}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `ui/components/terminal.templ`, Line: 36, Col: 35}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 		if templ_7745c5c3_Err != nil {

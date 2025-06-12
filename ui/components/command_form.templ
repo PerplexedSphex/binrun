@@ -1,0 +1,118 @@
+package components
+
+import (
+	"fmt"
+	"binrun/internal/messages"
+)
+
+// CommandForm renders a form for a command type
+templ CommandForm(messageType string, script string, defaults map[string]any) {
+	<form class="command-form" 
+	      data-on-submit={getSubmitAction(messageType, script)}>
+		
+		// Always include message type as hidden field
+		<input type="hidden" name="_messageType" value={messageType} />
+		
+		// For script-specific commands, include script name
+		if messageType == "ScriptRunCommand" && script != "" {
+			<input type="hidden" name="script_name" value={script} />
+		}
+		
+		<h4 class="command-title">
+			{messageType}
+			if script != "" {
+				<span class="command-script">({script})</span>
+			}
+		</h4>
+		
+		for _, field := range messages.GetFieldSchemas(messageType) {
+			// Skip script_name field if we're setting it from the script parameter
+			if field.JSONName == "script_name" && messageType == "ScriptRunCommand" && script != "" {
+				// Skip rendering this field since we're setting it via hidden input
+			} else {
+				@renderField(field, getDefault(defaults, field.JSONName))
+			}
+		}
+		
+		<button type="submit" class="command-submit">Execute</button>
+	</form>
+}
+
+// renderField renders a single form field
+templ renderField(field messages.FieldSchema, defaultValue any) {
+	<div class="field-group">
+		<label for={field.JSONName}>
+			{field.Name}
+			if field.Required {
+				<span class="required">*</span>
+			}
+		</label>
+		switch field.Type {
+		case messages.FieldTypeString:
+			<input 
+				type="text" 
+				id={field.JSONName}
+				name={field.JSONName}
+				data-bind={field.JSONName}
+				placeholder={field.Placeholder}
+				value={fmt.Sprint(defaultValue)}
+				if field.Required { required }
+			/>
+		case messages.FieldTypeSelect:
+			<select name={field.JSONName} id={field.JSONName} data-bind={field.JSONName}>
+				for _, opt := range field.Options {
+					<option value={opt} 
+						if fmt.Sprint(defaultValue) == opt { selected }>
+						{opt}
+					</option>
+				}
+			</select>
+		case messages.FieldTypeBoolean:
+			<input 
+				type="checkbox" 
+				id={field.JSONName}
+				name={field.JSONName}
+				data-bind={field.JSONName}
+				if defaultValue == true || defaultValue == "true" { checked }
+			/>
+		case messages.FieldTypeArray:
+			<input 
+				type="text" 
+				id={field.JSONName}
+				name={field.JSONName}
+				data-bind={field.JSONName}
+				placeholder="space-separated values"
+				value={fmt.Sprint(defaultValue)}
+				class="field-array"
+			/>
+			<small class="field-help">Enter space-separated values</small>
+		case messages.FieldTypeKeyValue:
+			<textarea 
+				id={field.JSONName}
+				name={field.JSONName}
+				data-bind={field.JSONName}
+				placeholder="key=value pairs, one per line"
+				rows="3"
+				class="field-keyvalue"
+			>{fmt.Sprint(defaultValue)}</textarea>
+			<small class="field-help">Enter key=value pairs, one per line</small>
+		}
+	</div>
+}
+
+// getDefault safely gets a default value
+func getDefault(defaults map[string]any, key string) any {
+	if defaults == nil {
+		return ""
+	}
+	if val, ok := defaults[key]; ok {
+		return val
+	}
+	return ""
+}
+
+// getSubmitAction returns the appropriate datastar action for the command
+func getSubmitAction(messageType string, script string) string {
+	// All commands now use the unified endpoint
+	return "@post('/command', {contentType: 'form'})"
+} 

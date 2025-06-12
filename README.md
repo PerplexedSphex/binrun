@@ -121,6 +121,298 @@ Every run is isolated—streams and buckets live only in memory and are discarde
 
 ---
 
+## Messaging API
+
+The application uses a centralized messaging schema defined in `internal/messages/` that provides type-safe message construction and validation for all NATS messaging.
+
+### Message Types
+
+All messages implement one of two interfaces:
+- **Commands**: Input messages that request something to happen (e.g., `ScriptCreateCommand`)
+- **Events**: Output messages that indicate something has happened (e.g., `ScriptCreatedEvent`)
+
+### Available Messages
+
+#### Script Domain
+
+**Commands:**
+- `ScriptCreateCommand` - Create a new script project
+- `ScriptRunCommand` - Execute an existing script
+
+**Events:**
+- `ScriptCreatedEvent` - Script successfully created
+- `ScriptCreateErrorEvent` - Script creation failed
+- `ScriptJobStartedEvent` - Script job started execution
+- `ScriptJobOutputEvent` - Script job produced stdout/stderr
+- `ScriptJobExitEvent` - Script job completed
+- `ScriptJobErrorEvent` - Script job failed to start
+
+#### Terminal Domain
+
+**Commands:**
+- `TerminalCommandMessage` - Command entered in terminal
+
+**Events:**
+- `TerminalFreezeEvent` - Terminal output to display
+- `TerminalViewDocEvent` - Document viewing triggered
+
+### Usage Examples
+
+```go
+import "binrun/internal/messages"
+
+// Create and publish a command
+cmd := messages.NewScriptCreateCommand("my-script", "python").
+    WithCorrelation("req-123")
+
+publisher := messages.NewPublisher(js)
+if err := publisher.PublishCommand(ctx, cmd); err != nil {
+    log.Fatal(err)
+}
+
+// Create and publish an event
+evt := messages.NewScriptCreatedEvent("my-script", "python").
+    WithCorrelation("req-123")
+
+if err := publisher.PublishEvent(ctx, evt); err != nil {
+    log.Fatal(err)
+}
+```
+
+### Subject Patterns
+
+All NATS subject patterns are defined as constants in the schema:
+
+```go
+// Commands
+messages.ScriptCreateSubject        // "command.script.create"
+messages.ScriptRunSubjectPattern    // "command.script.*.run"
+
+// Events
+messages.ScriptCreatedSubjectPattern     // "event.script.*.created"
+messages.ScriptJobStartedSubjectPattern  // "event.script.*.job.*.started"
+messages.TerminalFreezeSubjectPattern    // "event.terminal.session.*.freeze"
+```
+
+Helper functions generate concrete subjects:
+
+```go
+messages.ScriptRunSubject("foo")           // "command.script.foo.run"
+messages.ScriptJobExitSubject("foo", "42") // "event.script.foo.job.42.exit"
+messages.TerminalFreezeSubject("abc123")   // "event.terminal.session.abc123.freeze"
+```
+
+### Validation
+
+All commands and events include validation to ensure data integrity:
+
+```go
+cmd := messages.NewScriptCreateCommand("", "python") // Invalid: empty name
+if err := cmd.Validate(); err != nil {
+    // Error: script_name is required
+}
+```
+
+The `Publisher` automatically validates messages before publishing, returning clear error messages for invalid data.
+
+---
+
+## Declarative Layout System
+
+The application supports a declarative layout system for arranging subscription tiles within panels. Layouts are defined as JSON structures and stored in the session KV.
+
+### Layout Node Types
+
+1. **Leaf Node**: Displays a single subscription
+```json
+{"subscription": "event.cpu.host1.freeze"}
+```
+
+2. **Binary Split**: Divides space between two children
+```json
+{
+  "split": "horizontal",  // or "vertical"
+  "at": "2/3",           // fractions: "1/2", "1/3", "2/3", "1/4", "3/4"
+  "first": {...},        // any node type
+  "second": {...}        // any node type
+}
+```
+
+3. **Even Split**: Divides space equally among N children
+```json
+{
+  "split": "even-3",     // "even-2" through "even-5"
+  "direction": "horizontal",  // or "vertical"
+  "items": [{...}, {...}, {...}]
+}
+```
+
+### Setting Layouts
+
+Layouts are set via the session KV entry:
+
+```bash
+# Simple two-panel layout
+nats kv put sessions $SESSION_ID '{
+  "subscriptions": ["event.orders.*", "event.logs.*"],
+  "layout": {
+    "panels": {
+      "main": {
+        "split": "horizontal",
+        "at": "2/3",
+        "first": {"subscription": "event.orders.*"},
+        "second": {"subscription": "event.logs.*"}
+      }
+    }
+  }
+}'
+
+# Complex nested layout
+nats kv put sessions $SESSION_ID '{
+  "subscriptions": ["event.cpu.*", "event.memory.*", "event.disk.*", "event.logs.*"],
+  "layout": {
+    "panels": {
+      "main": {
+        "split": "horizontal",
+        "at": "3/4",
+        "first": {
+          "split": "even-3",
+          "direction": "horizontal",
+          "items": [
+            {"subscription": "event.cpu.*"},
+            {"subscription": "event.memory.*"},
+            {"subscription": "event.disk.*"}
+          ]
+        },
+        "second": {"subscription": "event.logs.*"}
+      }
+    }
+  }
+}'
+```
+
+### Saving Layouts
+
+Layouts can be saved to the `layouts` KV bucket for reuse:
+
+```bash
+# Save a layout
+nats kv put layouts "my-dashboard" '{
+  "panels": {
+    "main": {
+      "split": "vertical",
+      "at": "1/2",
+      "first": {"subscription": "event.metrics.*"},
+      "second": {"subscription": "event.logs.*"}
+    }
+  }
+}'
+
+# List saved layouts
+nats kv keys layouts
+
+# Get a saved layout
+nats kv get layouts my-dashboard
+```
+
+### Layout Behavior
+
+- If no layout is specified, subscriptions are displayed in a simple grid
+- Subscriptions in the layout must match those in the subscriptions array
+- Invalid layouts fall back to grid display
+- Only the `main` panel currently supports layouts (left, right, bottom panels can be added)
+
+**Note**: Saved layouts are stored in the NATS KV bucket "layouts" (not yet implemented).
+
+---
+
+## Command Widgets
+
+The declarative layout system supports interactive command forms that allow users to send typed NATS commands through the UI.
+
+### Command Node Type
+
+Command nodes render forms for sending messages:
+
+```json
+{
+  "command": "ScriptCreateCommand",
+  "defaults": {
+    "script_type": "python"
+  }
+}
+```
+
+For script-specific commands, use the `script` field:
+
+```json
+{
+  "command": "ScriptRunCommand",
+  "script": "testbun",
+  "defaults": {
+    "args": "--verbose"
+  }
+}
+```
+
+### Supported Commands
+
+Commands are automatically generated from the message schema using struct tags:
+
+- **ScriptCreateCommand**: Create a new script project
+  - `script_name` (required, text)
+  - `script_type` (required, select: python/typescript)
+
+- **ScriptRunCommand**: Run an existing script
+  - Script name is specified in the layout `script` field
+  - `args` (optional, text - space-separated)
+  - `env` (optional, key-value pairs)
+
+### Field Types
+
+The system infers field types from Go struct tags:
+- `field_type:"select"` with `options:"python,typescript"`
+- `required:"true"` for required fields
+- `placeholder:"my-script"` for placeholder text
+
+### Example Layout with Commands
+
+```json
+{
+  "layout": {
+    "panels": {
+      "left": {
+        "split": "vertical",
+        "at": "1/2",
+        "first": {
+          "command": "ScriptCreateCommand",
+          "defaults": {"script_type": "python"}
+        },
+        "second": {
+          "command": "ScriptRunCommand",
+          "script": "myapp",
+          "defaults": {"args": "--debug"}
+        }
+      }
+    }
+  }
+}
+```
+
+This creates:
+- Top left: Form to create new scripts (defaults to python)
+- Bottom left: Form to run the "myapp" script specifically
+
+### API
+
+Commands are sent via POST to:
+- `/command/execute` for general commands (with `_messageType` field)
+- `/command/script/{name}/run` for script-specific run commands
+
+The forms use Datastar's form handling with proper validation. All field values are bound to signals for reactive updates.
+
+---
+
 # Appendix: JetStream 80/20 CLI & Go API Reference
 
 ## NATS CLI – Streams, Consumers, KV, Object Store

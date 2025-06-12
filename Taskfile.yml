@@ -1,5 +1,5 @@
-# Taskfile.yml — minimal but powerful live-reload workflow
-# Requires: Task >= v3.30, Go 1.22+, templ, goimports
+# Taskfile.yml — updated for schema‑aware codegen & hot‑reload
+# Requires: Task >= v3.30, Go 1.22+, templ, goimports, Node 18+, Python 3.10+
 
 version: "3"
 
@@ -19,13 +19,27 @@ env:
 tasks:
   # --- Dev tool bootstrap ----------------------------------------------------
   tools:
-    desc: "Install Task, templ & goimports + NATS tooling"
+    desc: "Install Task, templ, goimports, NATS tooling, Playwright, and code‑gen CLIs"
     cmds:
       - go install github.com/go-task/task/v3/cmd/task@latest
       - go install github.com/a-h/templ/cmd/templ@latest
       - go install golang.org/x/tools/cmd/goimports@latest
       - go install github.com/nats-io/natscli/nats@latest
       - go install github.com/nats-io/nats-server/v2@latest
+      - echo "Attempting to install Playwright Chromium browser..."
+      - NODE_OPTIONS="" playwright install chromium --with-deps --no-shell
+      # --- schema code‑gen dependencies ---
+            # --- schema code‑gen dependencies ---
+      - |
+        if ! command -v bun >/dev/null 2>&1; then
+          curl -fsSL https://bun.sh/install | bash
+        fi
+      - |
+        if ! command -v uv >/dev/null 2>&1; then
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade uv
+        fi
+      - uv pip install --upgrade --quiet datamodel-code-generator
 
   # --- Formatting & tidying --------------------------------------------------
   fmt:
@@ -46,6 +60,32 @@ tasks:
     generates: ["**/*_templ.go"]
     cmds:
       - templ generate .
+
+  codegen:
+    desc: "Generate TS & Python types from scripts/**/in|out.schema.json"
+    method: checksum
+    sources:
+      - "scripts/**/in.schema.json"
+      - "scripts/**/out.schema.json"
+    generates:
+      - "scripts/**/types/*"
+    cmds:
+      # TypeScript types
+      - |
+        find scripts -name in.schema.json | while read f; do
+          dir=$(dirname "$f")
+          mkdir -p "$dir/types"
+          bunx json-schema-to-typescript "$f" -o "$dir/types/in.ts" --bannerComment ""
+          bunx json-schema-to-typescript "${f/in/out}" -o "$dir/types/out.ts" --bannerComment "" || true
+        done
+      # Python pydantic models
+      - |
+        find scripts -name in.schema.json | while read f; do
+          dir=$(dirname "$f")
+          mkdir -p "$dir/types"
+          datamodel-codegen -i "$f" -o "$dir/types/in.py" --class-name Input
+          datamodel-codegen -i "${f/in/out}" -o "$dir/types/out.py" --class-name Output || true
+        done
 
   # --- Build helpers ---------------------------------------------------------
   build:
@@ -72,6 +112,7 @@ tasks:
       - "**/*.go"
       - "**/*.templ"
       - "**/*.css"
+      # - "scripts/**/*.schema.json"   # watch schemas too
     deps: [kill, build]
     cmds:
       - "{{.BIN_DIR}}/{{.BIN_NAME}}"
@@ -95,7 +136,6 @@ tasks:
       - git push origin master
 
   # --- Convenience aliases ---------------------------------------------------
-
   default:
     desc: "runs the hot reload server"
     cmds:

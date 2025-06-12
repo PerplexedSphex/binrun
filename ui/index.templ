@@ -129,7 +129,7 @@ templ Index() {
                  document.body.classList.remove('dragging');
              "></div>
 
-        <!-- right sidebar -->
+        <!-- right sidebar - content injected by layout SSE -->
         <aside id="right-panel" data-show="$rightOpen">
             <div id="right-panel-content"></div>
         </aside>
@@ -157,7 +157,7 @@ templ Index() {
         <!-- bottom panel -->
         <main id="bottom-panel" data-show="$bottomOpen">
             <div id="bottom-panel-content">
-                @components.Terminal()
+                <!-- Terminal component was here, now moved to right-panel-content -->
             </div>
         </main>
     </body>

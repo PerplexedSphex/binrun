@@ -1,0 +1,141 @@
+package components
+
+import (
+	"fmt"
+	layout "binrun/internal/layout"
+)
+
+// LayoutTree renders the entire panel layout
+templ LayoutTree(layout *layout.PanelLayout, panelName string) {
+	if layout == nil || layout.Panels == nil {
+		// No layout, render nothing
+		<div id={panelName + "-panel-content"}></div>
+	} else if node, ok := layout.Panels[panelName]; ok && node != nil {
+		<div id={panelName + "-panel-content"} class="layout-root">
+			@renderLayoutNode(node, panelName, "root")
+		</div>
+	} else {
+		// Panel not defined in layout
+		<div id={panelName + "-panel-content"}></div>
+	}
+}
+
+// renderLayoutNode recursively renders a layout node
+templ renderLayoutNode(node *layout.LayoutNode, panelName string, path string) {
+	switch node.NodeType() {
+	case "document":
+		@renderDocumentNode(node, panelName, path)
+	case "leaf":
+		@renderLeafNode(node, panelName, path)
+	case "command":
+		@renderCommandNode(node, panelName, path)
+	case "binary":
+		@renderBinaryNode(node, panelName, path)
+	case "even":
+		@renderEvenNode(node, panelName, path)
+	case "component":
+		@renderComponentNode(node, panelName, path)
+	}
+}
+
+// renderLeafNode renders a subscription container
+templ renderLeafNode(node *layout.LayoutNode, panelName string, path string) {
+	<div class="layout-leaf" data-path={path}>
+		@SubscriptionContainer(node.Subscription)
+	</div>
+}
+
+// renderCommandNode renders a command form
+templ renderCommandNode(node *layout.LayoutNode, panelName string, path string) {
+	<div class="layout-command" data-path={path}>
+		@CommandForm(node.Command, node.Script, node.Defaults)
+	</div>
+}
+
+// renderBinaryNode renders a binary split
+templ renderBinaryNode(node *layout.LayoutNode, panelName string, path string) {
+	<div 
+		class={"layout-split", "layout-split-" + node.Split}
+		data-path={path}
+		style={getBinarySplitStyle(node)}
+	>
+		<div class="layout-split-first">
+			@renderLayoutNode(node.First, panelName, path + "-first")
+		</div>
+		<div class="layout-split-second">
+			@renderLayoutNode(node.Second, panelName, path + "-second")
+		</div>
+	</div>
+}
+
+// renderEvenNode renders an even split
+templ renderEvenNode(node *layout.LayoutNode, panelName string, path string) {
+	<div 
+		class={"layout-even", "layout-even-" + node.Direction}
+		data-path={path}
+		style={getEvenSplitStyle(node)}
+	>
+		for i, item := range node.Items {
+			<div class="layout-even-item">
+				@renderLayoutNode(item, panelName, fmt.Sprintf("%s-item%d", path, i))
+			</div>
+		}
+	</div>
+}
+
+// renderComponentNode renders a built-in component such as the terminal
+templ renderComponentNode(node *layout.LayoutNode, panelName string, path string) {
+	<div class="layout-component" data-path={path}>
+		@Terminal()
+	</div>
+}
+
+// renderDocumentNode renders a document viewer with provided paths
+templ renderDocumentNode(node *layout.LayoutNode, panelName string, path string) {
+	@DocMarkdown(node.DocumentPaths)
+}
+
+// Helper functions for generating CSS styles
+
+func getBinarySplitStyle(node *layout.LayoutNode) string {
+	if node.Split == "horizontal" {
+		// horizontal = top/bottom split
+		switch node.At {
+		case "1/3":
+			return "grid-template-rows: 1fr 2fr;"
+		case "2/3":
+			return "grid-template-rows: 2fr 1fr;"
+		case "1/4":
+			return "grid-template-rows: 1fr 3fr;"
+		case "3/4":
+			return "grid-template-rows: 3fr 1fr;"
+		default: // "1/2"
+			return "grid-template-rows: 1fr 1fr;"
+		}
+	} else {
+		// vertical = left/right split
+		switch node.At {
+		case "1/3":
+			return "grid-template-columns: 1fr 2fr;"
+		case "2/3":
+			return "grid-template-columns: 2fr 1fr;"
+		case "1/4":
+			return "grid-template-columns: 1fr 3fr;"
+		case "3/4":
+			return "grid-template-columns: 3fr 1fr;"
+		default: // "1/2"
+			return "grid-template-columns: 1fr 1fr;"
+		}
+	}
+}
+
+func getEvenSplitStyle(node *layout.LayoutNode) string {
+	count := len(node.Items)
+	if node.Direction == "horizontal" {
+		// horizontal = row of items
+		return fmt.Sprintf("grid-template-columns: repeat(%d, 1fr);", count)
+	} else {
+		// vertical = column of items
+		return fmt.Sprintf("grid-template-rows: repeat(%d, 1fr);", count)
+	}
+} 

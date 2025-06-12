@@ -3,20 +3,58 @@ package platform
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
+
+	layoutpkg "binrun/internal/layout"
+	runtime "binrun/internal/runtime"
 
 	components "binrun/ui/components"
 
-	"slices"
-
-	runtime "binrun/internal/runtime"
-
+	"github.com/a-h/templ"
 	"github.com/nats-io/nats.go/jetstream"
 	datastar "github.com/starfederation/datastar/sdk/go"
 )
+
+// helper to compare two sorted string slices
+func equalSubs(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// minimal interface for the SSE helper we need
+type sseWriter interface {
+	MergeFragmentTempl(t templ.Component, opts ...datastar.MergeFragmentOption) error
+}
+
+// renderPanels updates left/main/right based on layout; shows grid when layout is nil.
+func renderPanels(sse sseWriter, pl *layoutpkg.PanelLayout, sid string) {
+	if pl == nil {
+		// blank left/right, show grid in main
+		for _, pn := range []string{"left", "main", "right"} {
+			blank := components.LayoutTree(nil, pn)
+			_ = sse.MergeFragmentTempl(blank, datastar.WithSelectorID(pn+"-panel-content"))
+		}
+		return
+	}
+	// Have layout; render each panel, blanking if node nil
+	for _, pn := range []string{"left", "main", "right"} {
+		var comp templ.Component
+		if node, ok := pl.Panels[pn]; ok && node != nil {
+			comp = components.LayoutTree(pl, pn)
+		} else {
+			comp = components.LayoutTree(nil, pn)
+		}
+		_ = sse.MergeFragmentTempl(comp, datastar.WithSelectorID(pn+"-panel-content"))
+	}
+}
 
 // UIStream is the SSE handler for /ui
 func UIStream(js jetstream.JetStream) http.HandlerFunc {
@@ -31,61 +69,56 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 		// --- Get session subscriptions, ensuring terminal sub exists in KV ---
 		entry, err := kv.Get(ctx, sid)
 		if err != nil {
-			// Entry doesn't exist, create a default one with just terminal
-			slog.Info("UIStream: No session KV found, creating default", "sid", sid)
-			termSubj := fmt.Sprintf("event.terminal.session.%s.freeze", sid)
-			info := SessionInfo{Subscriptions: []string{termSubj}}
-			data, _ := json.Marshal(info)
-			if _, putErr := kv.Put(ctx, sid, data); putErr != nil {
+			// No session data: load default preset
+			slog.Info("UIStream: No session KV found, loading default preset", "sid", sid)
+			preset, ok := layoutpkg.Presets["default"]
+			var built *layoutpkg.PanelLayout
+			if ok {
+				built, err = preset.BuildLayout(nil)
+				if err != nil {
+					slog.Error("UIStream: failed to build default preset layout", "err", err)
+					http.Error(w, "internal error", 500)
+					return
+				}
+			}
+			// Persist default state
+			state := layoutpkg.SessionState{Env: nil, Layout: built}
+			dataObj, _ := state.Raw()
+			raw, _ := json.Marshal(dataObj)
+			if _, putErr := kv.Put(ctx, sid, raw); putErr != nil {
 				slog.Error("UIStream: Failed to put default session KV", "sid", sid, "err", putErr)
 				http.Error(w, "internal error", 500)
 				return
 			}
-			// Use this default info to proceed
-			entry, err = kv.Get(ctx, sid) // Re-fetch to get the entry object
+			entry, err = kv.Get(ctx, sid)
 			if err != nil {
-				// Should not happen after successful Put, but handle defensively
 				slog.Error("UIStream: Failed to re-fetch session KV after create", "sid", sid, "err", err)
 				http.Error(w, "internal error", 500)
 				return
 			}
 		}
-
-		var info SessionInfo
-		if err := json.Unmarshal(entry.Value(), &info); err != nil {
+		// Load unified session state
+		sess, err := layoutpkg.LoadSessionData(entry.Value())
+		if err != nil {
 			http.Error(w, "invalid session info", 500)
 			return
 		}
+		// Use typed state; derive subscriptions from layout
+		layoutTree := sess.Layout
+		subs := layoutTree.GetRequiredSubscriptions(sid)
 
-		termSubj := fmt.Sprintf("event.terminal.session.%s.freeze", sid)
-		if !slices.Contains(info.Subscriptions, termSubj) {
-			info.Subscriptions = append(info.Subscriptions, termSubj)
-			slices.Sort(info.Subscriptions)
-			data, _ := json.Marshal(info)
-			// Update the KV store with the corrected list
-			if _, putErr := kv.Put(ctx, sid, data); putErr != nil {
-				slog.Error("UIStream: Failed to update session KV with terminal sub", "sid", sid, "err", putErr)
-				// Don't fail the request, just log it. Proceed with the in-memory list.
-			}
+		if layoutTree != nil && layoutTree.Validate() != nil {
+			slog.Warn("Invalid layout in session", "sid", sid)
 		}
 
-		if len(info.Subscriptions) == 0 {
+		if len(subs) == 0 {
 			http.Error(w, "no subscriptions", 404)
 			return
 		}
 
-		// Render grid for initial subscriptions (using the now-complete list)
-		{
-			// Filter out terminal subjects before rendering the grid
-			gridSubs := []string{}
-			for _, s := range info.Subscriptions {
-				if !strings.HasPrefix(s, "event.terminal.session.") {
-					gridSubs = append(gridSubs, s)
-				}
-			}
-			grid := components.SubscriptionsGrid(gridSubs)
-			_ = sse.MergeFragmentTempl(grid)
-		}
+		renderPanels(sse, layoutTree, sid)
+
+		// (Commands are rendered via declarative layout; no manual command merging)
 
 		// --- Setup for watcher ---
 		consumerCancel := func() {}
@@ -128,7 +161,7 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 		}
 
 		// --- Start initial consumer ---
-		currentSubs := info.Subscriptions // Already includes terminal and is sorted
+		currentSubs := subs // Already includes terminal and is sorted
 		sessionRenderers := runtime.ForSubjects(currentSubs)
 		consumerCancel, consumerDone = createConsumer(currentSubs, sessionRenderers)
 
@@ -150,14 +183,14 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 					return
 				}
 
-				var newInfo SessionInfo
-				_ = json.Unmarshal(update.Value(), &newInfo)
-				newSubs := newInfo.Subscriptions
-				// Ensure terminal sub is present for comparison
-				if !slices.Contains(newSubs, termSubj) {
-					newSubs = append(newSubs, termSubj)
+				// Load updated session state
+				newState, err := layoutpkg.LoadSessionData(update.Value())
+				if err != nil {
+					slog.Warn("Invalid session update", "sid", sid, "err", err)
+					continue
 				}
-				slices.Sort(newSubs)
+				newLayout := newState.Layout
+				newSubs := newLayout.GetRequiredSubscriptions(sid)
 
 				// Compare sorted lists
 				subsChanged := len(newSubs) != len(currentSubs)
@@ -170,24 +203,17 @@ func UIStream(js jetstream.JetStream) http.HandlerFunc {
 					}
 				}
 
-				if subsChanged {
-					// Render grid update using actual KV subs (filter out terminal)
-					gridSubs := []string{}
-					for _, s := range newInfo.Subscriptions {
-						if !strings.HasPrefix(s, "event.terminal.session.") {
-							gridSubs = append(gridSubs, s)
-						}
-					}
-					grid := components.SubscriptionsGrid(gridSubs)
-					_ = sse.MergeFragmentTempl(grid)
+				// Always re-render panels on any session change
+				renderPanels(sse, newLayout, sid)
 
-					// Recreate renderer set and consumer
-					sessionRenderers = runtime.ForSubjects(newSubs)
-					consumerCancel()
-					<-consumerDone
-					consumerCancel, consumerDone = createConsumer(newSubs, sessionRenderers)
-					currentSubs = newSubs
-				}
+				layoutTree = newLayout
+
+				// Recreate JetStream consumer for the (possibly unchanged) subject list
+				sessionRenderers = runtime.ForSubjects(newSubs)
+				consumerCancel()
+				<-consumerDone
+				consumerCancel, consumerDone = createConsumer(newSubs, sessionRenderers)
+				currentSubs = newSubs
 			}
 		}()
 

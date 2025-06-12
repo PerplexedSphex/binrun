@@ -1,0 +1,18 @@
+{
+  "title": "FrontFetcherOutput",
+  "type": "object",
+  "properties": {
+    "emails": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "subject": { "type": "string" }
+        },
+        "required": ["id", "subject"]
+      }
+    }
+  },
+  "required": ["emails"]
+} 

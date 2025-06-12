@@ -1,0 +1,33 @@
+{
+    "id": "scriptsubs",
+    "help": "Script lifecycle events",
+    "params": ["script", "job"],
+    "layout": {
+      "panels": {
+        "left": {
+          "command": "ScriptRunCommand",
+          "script": "{script}",
+          "defaults": {}
+        },
+        "main": {
+          "split": "horizontal",
+          "at": "1/4",
+          "first": {
+            "split": "vertical",
+            "at": "1/2",
+            "first": { "subscription": "event.script.{script}.job.{job}.started" },
+            "second": { "subscription": "event.script.{script}.job.{job}.exit" }
+          },
+          "second": {
+            "split": "horizontal",
+            "at": "1/2",
+            "first": { "subscription": "event.script.{script}.job.{job}.stdout" },
+            "second": { "subscription": "event.script.{script}.job.{job}.stderr" }
+          }
+        },
+        "right": {
+          "component": "terminal"
+        }
+      }
+    }
+  } 

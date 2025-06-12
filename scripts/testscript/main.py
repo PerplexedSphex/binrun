@@ -1,8 +1,14 @@
 import sys
+import json
 import time
+from pathlib import Path
 
 
 def main():
+    # Load input JSON (not used, but required by protocol)
+    input_path = Path(sys.argv[1])
+    _ = json.loads(input_path.read_text())
+
     # 1. print python version
     print(f"Python version: {sys.version}")
 

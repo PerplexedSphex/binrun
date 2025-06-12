@@ -73,15 +73,12 @@ func RunHTTPServer(ctx context.Context, nc *nats.Conn, cfg HTTPServerConfig) <-c
 	// metrics endpoint
 	r.Method(http.MethodGet, "/metrics", promhttp.Handler())
 
-	// application routes
-	r.Get("/health", Health)
-	r.Post("/command/{name}", SendCommand(nc))
-
 	// JetStream context for handlers
 	js, _ := jetstream.New(nc)
 
-	// Terminal endpoint
-	r.Post("/terminal", TerminalCommandHandler(js))
+	// application routes
+	r.Get("/health", Health)
+	r.Post("/command", SendCommand(nc, js))
 
 	// UI root route using Templ
 	r.Get("/", templ.Handler(ui.Index()).ServeHTTP)
@@ -95,7 +92,6 @@ func RunHTTPServer(ctx context.Context, nc *nats.Conn, cfg HTTPServerConfig) <-c
 	}))
 
 	r.Get("/ui", UIStream(js))
-	r.Post("/session/load/{preset}", LoadPresetHandler(js))
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
