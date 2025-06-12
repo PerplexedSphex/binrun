@@ -348,5 +348,8 @@ func GetCommandTypes() []string {
 		"ScriptCreateCommand",
 		"ScriptRunCommand",
 		"TerminalCommandMessage",
+		"PanelSetCommand",
+		"ApplyPresetCommand",
+		"LayoutPatchCommand",
 	}
 }

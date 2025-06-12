@@ -6,6 +6,7 @@ toolchain go1.24.2
 
 require (
 	github.com/a-h/templ v0.3.857
+	github.com/evanphx/json-patch/v5 v5.9.11
 	github.com/go-chi/chi/v5 v5.2.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/sessions v1.4.0

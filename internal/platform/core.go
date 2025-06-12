@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"binrun/internal/layout"
 	"binrun/internal/runtime"
 
 	"github.com/nats-io/nats-server/v2/server"
@@ -83,6 +84,19 @@ func Run(ctx context.Context, nc *nats.Conn, ns *server.Server) {
 		slog.Warn("Error creating layouts KV bucket", "err", err)
 	}
 	slog.Info("KV bucket 'layouts' created for saved layout configurations.")
+
+	// --- Activate LayoutManager (after stream + buckets exist) ---
+	lm := runtime.NewLayoutManager(js)
+	go func() {
+		if err := lm.Start(ctx); err != nil {
+			slog.Error("LayoutManager error", "err", err)
+		} else {
+			slog.Info("LayoutManager started")
+		}
+	}()
+
+	// Load dynamic presets at start-up (Option F)
+	_ = layout.LoadDynamicPresets(ctx, js)
 
 	// The server is now configured and will automatically handle new sessions and messages.
 	slog.Info("🚀 JetStream in-process system is up. You can now use NATS CLI to interact with it.")
